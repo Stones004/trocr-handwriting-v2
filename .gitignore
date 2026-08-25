@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+*.pyc
+checkpoints/
+outputs/
+data
+*.log
+preprocess_test_results
+error_analysis.csv
