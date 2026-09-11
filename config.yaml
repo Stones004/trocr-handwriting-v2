@@ -1,14 +1,14 @@
 model_name: "microsoft/trocr-small-handwritten"
-image_dir: "D:/completed"
-annotation_file: "data/raw/annotations.csv.xlsx"
-label_column: "text"
+image_dir: "G:/OCR_codes/ocr_dataset_builder/dataset/completed"
+annotation_file: "C:/Users/Christ/Desktop/annotations.xlsx"
+label_column: "Normalize"
 filename_column: "filename"
 
 split:
   train: 0.80
   val: 0.10
   test: 0.10
-  seed: 42
+  seed: 25
 
 training:
   batch_size: 8

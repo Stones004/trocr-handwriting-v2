@@ -6,6 +6,14 @@ import torch
 from PIL import Image
 from transformers import TrOCRProcessor, VisionEncoderDecoderModel
 
+from constraints import (
+    get_closed_vocab_processor,
+    get_tracking_closed_vocab_processor,
+    get_logits_processor_from_csvs,
+    transition_confidence,
+)
+from dataset import resize_with_padding, get_target_size
+
 
 MODEL_NAME = "microsoft/trocr-small-handwritten"
 
@@ -118,6 +126,32 @@ def main():
         default=4,
     )
 
+    parser.add_argument(
+        "--no-constrain",
+        action="store_true",
+        help="disable constrained decoding entirely",
+    )
+
+    parser.add_argument(
+        "--charmask",
+        action="store_true",
+        help="use the old flat label-token mask instead of the closed-vocabulary trie (weaker, kept for comparison)",
+    )
+
+    parser.add_argument(
+        "--flag-threshold",
+        type=float,
+        default=0.5,
+        help="flag a sample for review if its min post-mask token confidence falls below this",
+    )
+
+    parser.add_argument(
+        "--temperature",
+        type=float,
+        default=1.0,
+        help="calibration temperature from calibrate_temperature.py (1.0 = unscaled)",
+    )
+
     args = parser.parse_args()
 
     device = torch.device(
@@ -158,6 +192,33 @@ def main():
     model.eval()
 
     # ---------------------------------------------------------
+    # Vocab-constrained decoding
+    # ---------------------------------------------------------
+
+    logits_processor = None
+    tracking_processor = None
+
+    if not args.no_constrain:
+        csv_paths = ["data/processed/train.csv", "data/processed/val.csv"]
+
+        if args.charmask:
+            logits_processor = get_logits_processor_from_csvs(processor, csv_paths)
+        else:
+            logits_processor = get_closed_vocab_processor(processor, model, csv_paths)
+
+        # The raw pre-mask top1/top2 margin (useful for flagging genuinely
+        # ambiguous glyphs, e.g. 6 vs b, or catching confidently-wrong
+        # predictions the post-mask confidence misses) is only reliably
+        # attributable in greedy decoding -- see constraints.py docstring.
+        # Only build the tracking variant when --beams 1 is passed.
+        if args.beams == 1 and not args.charmask:
+            tracking_processor = get_tracking_closed_vocab_processor(
+                processor, model, csv_paths
+            )
+            from transformers import LogitsProcessorList
+            logits_processor = LogitsProcessorList([tracking_processor])
+
+    # ---------------------------------------------------------
     # Load test set
     # ---------------------------------------------------------
 
@@ -186,28 +247,48 @@ def main():
             image_path
         ).convert("RGB")
 
+        image = resize_with_padding(
+            image, target_size=get_target_size(processor)
+        )
+
         pixel_values = processor(
             images=image,
             return_tensors="pt",
         ).pixel_values.to(device)
 
+        if tracking_processor is not None:
+            tracking_processor.reset()
+
         with torch.no_grad():
 
-            generated_ids = model.generate(
+            outputs = model.generate(
                 pixel_values,
                 max_new_tokens=16,
                 num_beams=args.beams,
                 early_stopping=True,
+                logits_processor=logits_processor,
+                output_scores=True,
+                return_dict_in_generate=True,
             )
 
         prediction = processor.batch_decode(
-            generated_ids,
+            outputs.sequences,
             skip_special_tokens=True,
         )[0]
 
         prediction = normalize_for_comparison(
             prediction
         )
+
+        conf = transition_confidence(model, outputs, temperature=args.temperature)[0]
+        min_conf = conf["seq_min_prob"]
+        flagged = min_conf < args.flag_threshold
+
+        margin_info = {"min_margin": None, "any_overridden": None}
+        if tracking_processor is not None:
+            margin_info = tracking_processor.raw_margin_confidence()
+            if margin_info["min_margin"] < 0.1:
+                flagged = True
 
         (
             distance,
@@ -234,6 +315,11 @@ def main():
                 "substitutions": substitutions,
                 "deletions": deletions,
                 "insertions": insertions,
+                "min_confidence": min_conf,
+                "mean_confidence": conf["seq_mean_prob"],
+                "raw_min_margin": margin_info["min_margin"],
+                "grammar_overrode_top_pick": margin_info["any_overridden"],
+                "flagged_for_review": flagged,
             }
         )
 
@@ -241,6 +327,8 @@ def main():
             f"[{index + 1:03d}/{len(df):03d}] "
             f"GT={target!r:<10} "
             f"PRED={prediction!r:<10} "
+            f"conf={min_conf:.2f} "
+            f"{'FLAGGED ' if flagged else ''}"
             f"{'OK' if exact else 'ERROR'}"
         )
 
@@ -322,6 +410,15 @@ def main():
     print(
         "\nFailed samples:",
         len(errors),
+    )
+
+    flagged_count = results_df["flagged_for_review"].sum()
+
+    print(
+        f"Flagged for review (min_confidence < {args.flag_threshold}"
+        + (" or raw margin < 0.1" if args.beams == 1 else "")
+        + "):",
+        flagged_count,
     )
 
     print("\n" + "-" * 70)

@@ -1,0 +1,9 @@
+# Extra dependencies for src/eval_parseq.py and src/eval_ppocr.py only.
+# Not needed for training/evaluating the project's own TrOCR model --
+# install these separately (pip install -r requirements-ocr-compare.txt)
+# when you want to run the zero-shot PARSeq / PP-OCRv5 comparison.
+paddlepaddle
+paddleocr
+timm
+pytorch-lightning
+nltk

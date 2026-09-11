@@ -1,9 +1,12 @@
 torch
 torchvision
-transformers
+transformers==4.57.3
 pandas
 openpyxl
 pillow
 pyyaml
 numpy
 tqdm
+sentencepiece==0.2.2
+protobuf
+tokenizers==0.22.1

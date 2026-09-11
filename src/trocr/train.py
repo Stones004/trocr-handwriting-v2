@@ -1,12 +1,14 @@
 import argparse
 import random
+from collections import Counter
 from pathlib import Path
 
 import numpy as np
+import pandas as pd
 import torch
 import yaml
 from torch.optim import AdamW
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from transformers import (
     TrOCRProcessor,
     VisionEncoderDecoderModel,
@@ -14,6 +16,31 @@ from transformers import (
 )
 
 from dataset import HandwritingDataset, collate_fn
+
+
+def build_weighted_sampler(csv_path, text_column="text"):
+    """
+    Inverse-frequency sampling: rows whose exact label string is rare in
+    train.csv get sampled proportionally more often per epoch, so the
+    model sees more balanced gradient signal across label classes despite
+    the raw dataset being ~100:1 imbalanced (e.g. '2' at 168 samples vs
+    singleton Roman-numeral/combo labels at 1).
+
+    NOTE: with replacement=True, a singleton class gets the SAME image
+    repeated many times per epoch, not new examples -- this only avoids
+    turning into pure memorization if paired with light augmentation
+    (rotation/jitter) in HandwritingDataset.__getitem__. Without that,
+    treat this as a partial fix, not a complete one.
+    """
+    df = pd.read_csv(csv_path)
+    labels = df[text_column].astype(str).tolist()
+    counts = Counter(labels)
+    weights = [1.0 / counts[label] for label in labels]
+    return WeightedRandomSampler(
+        weights,
+        num_samples=len(weights),
+        replacement=True,
+    )
 
 
 def set_seed(seed):
@@ -166,6 +193,7 @@ def main():
         max_target_length=int(
             train_cfg["max_target_length"]
         ),
+        augment=True,
     )
 
     val_dataset = HandwritingDataset(
@@ -187,6 +215,25 @@ def main():
         len(val_dataset),
     )
 
+    label_counts = Counter(
+        pd.read_csv("data/processed/train.csv")["text"].astype(str)
+    )
+
+    print(
+        "  Unique train labels:",
+        len(label_counts),
+    )
+
+    print(
+        "  Most common label:",
+        label_counts.most_common(1)[0],
+    )
+
+    print(
+        "  Rarest label count:",
+        min(label_counts.values()),
+    )
+
     # ---------------------------------------------------------
     # DataLoaders
     # ---------------------------------------------------------
@@ -199,12 +246,16 @@ def main():
         "collate_fn": collate_fn,
     }
 
+    train_sampler = build_weighted_sampler(
+        "data/processed/train.csv"
+    )
+
     train_loader = DataLoader(
         train_dataset,
         batch_size=int(
             train_cfg["batch_size"]
         ),
-        shuffle=True,
+        sampler=train_sampler,
         **loader_args,
     )
 

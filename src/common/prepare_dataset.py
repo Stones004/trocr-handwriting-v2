@@ -1,12 +1,33 @@
 from pathlib import Path
 import argparse
 import random
+import re
 
 import pandas as pd
 import yaml
 
 
 AMBIGUOUS_LABELS = {"ambigous", "ambiguous"}
+
+# Excel/XML embeds a literal escape like _x000D_ (carriage return),
+# _x000A_ (line feed), etc. when a cell has an internal line break and
+# the reader doesn't decode it. Strip these out rather than dropping
+# the whole row -- the remaining text is often still valid ground truth
+# (e.g. "(iv)_x000D_" -> "(iv)").
+EXCEL_ARTIFACT_PATTERN = re.compile(r"_x000[0-9A-Fa-f]_")
+
+# Matches the "clean" symbol-grammar labels this project is actually
+# built around: a digit run (optionally with a single trailing subpart
+# letter, e.g. "6b"), a Roman numeral, or a bare subpart letter --
+# optionally wrapped in parens and/or with trailing "." / ")" / ".)".
+# Anything that doesn't match (annotator notes like "Ans 4 (a)",
+# multi-token combos with internal spaces, stray artifacts like "|")
+# is real content but not part of the closed symbol vocabulary this
+# pipeline constrains decoding to -- it gets routed to freetext.csv
+# instead of train/val/test, same treatment as ambiguous rows.
+CLEAN_PATTERN = re.compile(
+    r"^\(?(?:[0-9]+[a-jA-J]?|[IVXivx]+|[a-jA-J])(?:\.\)|[.)])?\)?\Z"
+)
 
 
 def main():
@@ -49,6 +70,20 @@ def main():
     work[filename_col] = work[filename_col].astype("string").str.strip()
     work[label_col] = work[label_col].astype("string").str.strip()
 
+    # Strip Excel line-break artifacts (_x000D_ etc.) that leak through
+    # when a cell has an internal line break. Log how many rows were
+    # affected so it's visible, not silent.
+    artifact_mask = work[label_col].str.contains(
+        EXCEL_ARTIFACT_PATTERN, na=False
+    )
+    excel_artifact_count = int(artifact_mask.sum())
+
+    work[label_col] = (
+        work[label_col]
+        .str.replace(EXCEL_ARTIFACT_PATTERN, "", regex=True)
+        .str.strip()
+    )
+
     # Remove only rows with no OCR target.
     valid_label = (
         work[label_col].notna()
@@ -66,6 +101,16 @@ def main():
 
     ambiguous = work.loc[ambiguous_mask].copy()
     work = work.loc[~ambiguous_mask].copy()
+
+    # Split out free-text labels (real content, but outside the closed
+    # symbol grammar this pipeline is built around) from the clean
+    # symbol-pattern labels that go into train/val/test.
+    clean_mask = work[label_col].apply(
+        lambda text: bool(CLEAN_PATTERN.match(str(text)))
+    )
+
+    freetext = work.loc[~clean_mask].copy()
+    work = work.loc[clean_mask].copy()
 
     # Resolve image paths.
     work["image_path"] = work[filename_col].map(
@@ -176,6 +221,48 @@ def main():
             index=False
         )
 
+    # Save free-text samples separately -- real content, outside the
+    # closed symbol grammar. Kept out of train/val/test so they don't
+    # dilute the vocab-constrained model; route these to unconstrained
+    # decoding + mandatory human review at inference time instead.
+    if len(freetext):
+
+        freetext = freetext.rename(
+            columns={
+                filename_col: "filename",
+                label_col: "text",
+            }
+        )
+
+        freetext["image_path"] = freetext[
+            "filename"
+        ].map(
+            lambda filename:
+            str(image_dir / str(filename))
+        )
+
+        freetext = freetext[
+            ["filename", "image_path", "text"]
+        ]
+
+        freetext.to_csv(
+            out / "freetext.csv",
+            index=False
+        )
+
+    else:
+
+        pd.DataFrame(
+            columns=[
+                "filename",
+                "image_path",
+                "text"
+            ]
+        ).to_csv(
+            out / "freetext.csv",
+            index=False
+        )
+
     # Save missing image references.
     if missing_images:
 
@@ -204,6 +291,11 @@ def main():
     )
 
     print(
+        f"Excel artifacts cleaned:    "
+        f"{excel_artifact_count}"
+    )
+
+    print(
         f"Missing/empty labels:       "
         f"{missing_label_count}"
     )
@@ -211,6 +303,11 @@ def main():
     print(
         f"Ambiguous rows excluded:    "
         f"{len(ambiguous)}"
+    )
+
+    print(
+        f"Free-text rows excluded:    "
+        f"{len(freetext)}"
     )
 
     print(
@@ -249,6 +346,11 @@ def main():
     print(
         f"Ambiguous file:              "
         f"{out / 'ambiguous.csv'}"
+    )
+
+    print(
+        f"Free-text file:              "
+        f"{out / 'freetext.csv'}"
     )
 
     print(
