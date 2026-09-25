@@ -1,0 +1,48 @@
+# @package _global_
+# Versioned fine-tuning config for PARSeq on the handwriting LMDB dataset.
+# Run (from the project root, in venv_parseq), preferably through the launcher that also applies config.yaml's
+# temp/cache settings and MLflow location:
+#   python src/parseq/train_parseq.py --experiment parseq_handwriting [hydra overrides...]
+# or directly:
+#   python third_party/parseq/train.py --config-dir=configs/parseq +experiment=parseq_handwriting
+# Any value can still be overridden on the command line, e.g. model.lr=1e-3.
+# Requires the patches in patches/parseq_train.patch (early stopping, augmentation strength, MLflow, seed).
+defaults:
+  - override /model: parseq
+  - override /charset: 94_full      # the 94 printable characters PARSeq was pretrained with; the label grammar is not enforced during decoding
+
+pretrained: parseq
+seed: 42                            # random seed (python, numpy, torch, data loaders)
+mlflow_experiment: parseq
+mlflow_db: mlflow.db                # tracking store; the launcher/drivers override this with paths.mlflow_db from config.yaml
+system_metrics_interval: 5          # seconds between CPU/RAM/GPU samples logged to MLflow; null disables
+
+data:
+  root_dir: data/parseq_lmdb        # resolved against the launch dir by train.py
+  train_dir: handwriting            # must equal lmdb.dataset_name in config.yaml
+  num_workers: 0
+  augment_magnitude: 9              # RandAugment strength; PARSeq default is 5
+  augment_num_layers: 3             # ops applied per image; PARSeq default is 3
+
+# The values below are PARSeq's own defaults, pinned here so a re-cloned upstream repo cannot silently change a run.
+# The model architecture (embed_dim 384, 12 encoder layers, ...) is fixed by the pretrained weights and is not repeated.
+model:
+  img_size: [32, 128]               # [height, width]; every crop is resized to this
+  max_label_length: 25              # longest label the model can emit
+  batch_size: 32
+  lr: 1.5e-3                        # PARSeq default 7e-4 (scaled by batch_size/256 at runtime)
+  dropout: 0.2                      # PARSeq default 0.1
+  weight_decay: 0.0
+  warmup_pct: 0.075                 # fraction of training used for LR warm-up
+  perm_num: 6                       # permutations per sample for permutation language modelling
+
+trainer:
+  accelerator: gpu
+  devices: 1
+  val_check_interval: 1.0           # validate once per epoch
+  max_epochs: 50
+  gradient_clip_val: 20
+
+early_stopping:
+  patience: 8                       # epochs without val_accuracy improvement before stopping
+  min_delta: 0.0

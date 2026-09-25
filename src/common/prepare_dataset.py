@@ -1,57 +1,56 @@
 from pathlib import Path
 import argparse
 import random
-import re
+import sys
 
 import pandas as pd
-import yaml
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from label_grammar import CLEAN_PATTERN  # noqa: E402 -- single source of truth, shared with inference
+from project_config import label_regex, load_config, path, resolve  # noqa: E402
 
-AMBIGUOUS_LABELS = {"ambigous", "ambiguous"}
+# Everything below comes from config.yaml (image_dir, annotation_file, label_column, filename_column, split.*,
+# paths.processed_dir, labels.*); nothing about the dataset is hardcoded here.
+#
+# Excel/XML embeds a literal escape like _x000D_ (carriage return), _x000A_ (line feed), etc. when a cell has an
+# internal line break and the reader doesn't decode it (labels.excel_artifact_pattern). Strip these out rather than
+# dropping the whole row -- the remaining text is often still valid ground truth (e.g. "(iv)_x000D_" -> "(iv)").
 
-# Excel/XML embeds a literal escape like _x000D_ (carriage return),
-# _x000A_ (line feed), etc. when a cell has an internal line break and
-# the reader doesn't decode it. Strip these out rather than dropping
-# the whole row -- the remaining text is often still valid ground truth
-# (e.g. "(iv)_x000D_" -> "(iv)").
-EXCEL_ARTIFACT_PATTERN = re.compile(r"_x000[0-9A-Fa-f]_")
-
-# Matches the "clean" symbol-grammar labels this project is actually
-# built around: a digit run (optionally with a single trailing subpart
-# letter, e.g. "6b"), a Roman numeral, or a bare subpart letter --
-# optionally wrapped in parens and/or with trailing "." / ")" / ".)".
-# Anything that doesn't match (annotator notes like "Ans 4 (a)",
-# multi-token combos with internal spaces, stray artifacts like "|")
-# is real content but not part of the closed symbol vocabulary this
-# pipeline constrains decoding to -- it gets routed to freetext.csv
-# instead of train/val/test, same treatment as ambiguous rows.
-CLEAN_PATTERN = re.compile(
-    r"^\(?(?:[0-9]+[a-jA-J]?|[IVXivx]+|[a-jA-J])(?:\.\)|[.)])?\)?\Z"
-)
+# CLEAN_PATTERN (imported above) matches the "clean" symbol-grammar labels this project is actually built
+# around: a digit run (optionally with a single trailing subpart letter, e.g. "6b"), a Roman numeral, or a bare
+# subpart letter -- optionally wrapped in parens and/or with trailing "." / ")" / ".)". Anything that doesn't
+# match (annotator notes like "Ans 4 (a)", multi-token combos with internal spaces, stray artifacts like "|")
+# is real content but not part of the closed symbol vocabulary this pipeline constrains decoding to -- it gets
+# routed to freetext.csv instead of train/val/test, same treatment as ambiguous rows.
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--config", default="config.yaml")
+    ap.add_argument("--config", default=None, help="optional extra yaml layered on top of config.yaml + config.local.yaml")
     args = ap.parse_args()
 
-    with open(args.config, encoding="utf-8") as f:
-        cfg = yaml.safe_load(f)
+    cfg = load_config(args.config)
+    ambiguous_labels = {m.lower() for m in cfg["labels"]["ambiguous_markers"]}
+    excel_artifact_pattern = label_regex("excel_artifact_pattern")
+    ratios = [float(cfg["split"][k]) for k in ("train", "val", "test")]
+    if abs(sum(ratios) - 1.0) > 1e-6:
+        raise ValueError(f"split.train + split.val + split.test must sum to 1, got {sum(ratios)} ({ratios})")
 
-    annotation_file = Path(cfg["annotation_file"])
-    image_dir = Path(cfg["image_dir"])
+    annotation_file = resolve(cfg["annotation_file"])
+    image_dir = resolve(cfg["image_dir"])
     filename_col = cfg["filename_column"]
     label_col = cfg["label_column"]
 
     if not annotation_file.exists():
         raise FileNotFoundError(
-            f"Annotation file not found: {annotation_file}"
+            f"Annotation file not found: {annotation_file}\n"
+            "Set annotation_file in config.yaml (or config.local.yaml)."
         )
 
     if not image_dir.exists():
         raise FileNotFoundError(
             f"Image directory not found: {image_dir}\n"
-            "Edit image_dir in config.yaml."
+            "Set image_dir in config.yaml (or config.local.yaml)."
         )
 
     df = pd.read_excel(annotation_file)
@@ -74,13 +73,13 @@ def main():
     # when a cell has an internal line break. Log how many rows were
     # affected so it's visible, not silent.
     artifact_mask = work[label_col].str.contains(
-        EXCEL_ARTIFACT_PATTERN, na=False
+        excel_artifact_pattern, na=False
     )
     excel_artifact_count = int(artifact_mask.sum())
 
     work[label_col] = (
         work[label_col]
-        .str.replace(EXCEL_ARTIFACT_PATTERN, "", regex=True)
+        .str.replace(excel_artifact_pattern, "", regex=True)
         .str.strip()
     )
 
@@ -97,7 +96,7 @@ def main():
     # "ambigous" is a reviewer/annotation label, not handwritten
     # ground truth. Keep it separately and do not train on it.
     normalized_labels = work[label_col].str.lower()
-    ambiguous_mask = normalized_labels.isin(AMBIGUOUS_LABELS)
+    ambiguous_mask = normalized_labels.isin(ambiguous_labels)
 
     ambiguous = work.loc[ambiguous_mask].copy()
     work = work.loc[~ambiguous_mask].copy()
@@ -161,7 +160,7 @@ def main():
     val_idx = indices[train_end:val_end]
     test_idx = indices[val_end:]
 
-    out = Path("data/processed")
+    out = path("processed_dir")
     out.mkdir(
         parents=True,
         exist_ok=True

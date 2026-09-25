@@ -1,9 +1,9 @@
 # Replicating the PARSeq fine-tuning setup
 
 Step-by-step runbook to reproduce, on another machine, everything done in this
-project to (1) benchmark zero-shot PARSeq/PP-OCRv5 against the fine-tuned
-TrOCR model, and (2) fine-tune PARSeq itself. Written so someone with no
-memory of the original session can follow it end to end. See
+project to (1) benchmark the zero-shot PARSeq baseline, and (2) fine-tune
+PARSeq itself. Written so someone with no memory of the original session can
+follow it end to end. See
 [CODEBASE_OVERVIEW.md](CODEBASE_OVERVIEW.md) for the *why* behind each
 decision — this file is the *how*, in order.
 
@@ -17,31 +17,25 @@ driver (RTX 5060 Ti). Adjust the CUDA wheel index if your GPU/driver differs.
 - A working main project venv is not required for any of the steps below —
   everything here is self-contained in a new, separate venv.
 
-## 1. Zero-shot comparison scripts (PARSeq + PP-OCRv5, no fine-tuning)
+## 1. Zero-shot comparison script (PARSeq, no fine-tuning)
 
-These run in the **main project venv** (the one `requirements.txt` installs
-into), not a separate environment.
+This runs in the PARSeq environment set up below (`requirements-parseq.txt`).
 
 ```bash
-pip install -r requirements-ocr-compare.txt
-# installs: paddlepaddle, paddleocr, timm, pytorch-lightning, nltk
-
-python src/parseq/eval_parseq.py                       # pretrained PARSeq, zero-shot
-python src/compare/eval_ppocr.py                         # PP-OCRv5_server_rec, zero-shot
-python src/trocr/evaluate.py --model microsoft/trocr-small-handwritten --no-constrain
-                                                  # pretrained TrOCR, zero-shot, for a fair 3-way comparison
+venv_parseq/Scripts/python src/parseq/eval_parseq.py   # pretrained PARSeq, zero-shot
 ```
 
-All three print the same summary format (samples, exact-match accuracy, CER,
+It prints a summary (samples, exact-match accuracy, CER,
 flagged-for-review count) and accept `--output results.csv` for a per-sample
-breakdown. Results we got (173-row test set):
+breakdown. Results we got (173-row test set, before fine-tuning existed):
 
 | Model | Exact-match | CER |
 |---|---|---|
-| TrOCR (fine-tuned, `checkpoints/best`) | 86.7% | 11.3% |
-| PP-OCRv5_server_rec (zero-shot) | 56.1% | 68.9% |
 | PARSeq (zero-shot) | 40.5% | 71.2% |
-| TrOCR-small-handwritten (zero-shot) | 7.5% | 426.1% |
+
+See `reports/model_validation.md` for the current, up-to-date comparison
+against this project's fine-tuned PARSeq checkpoints (the numbers above
+predate any fine-tuning and are kept only as the zero-shot reference point).
 
 ## 2. Set up the PARSeq fine-tuning environment
 
@@ -51,6 +45,8 @@ A **separate venv** — PARSeq's training stack (Hydra, Lightning, `lmdb`,
 ```bash
 python -m venv venv_parseq
 ```
+
+Shortcut: after installing CUDA torch (next step), `pip install -r requirements-parseq.txt` replaces the manual dependency steps and version pins below.
 
 Install GPU-enabled PyTorch matching your CUDA driver (check with
 `nvidia-smi`; the example below is for CUDA 12.8):
@@ -182,18 +178,18 @@ python -c "import pandas as pd; d=pd.concat(pd.read_csv(f'data/processed/{s}.csv
 
 ## 4. Fine-tune
 
+The settings are versioned in `configs/parseq/experiment/parseq_handwriting.yaml`. Launch with:
+
 ```bash
-venv_parseq/Scripts/python third_party/parseq/train.py \
-  +experiment=parseq \
-  pretrained=parseq \
-  data.root_dir="<ABSOLUTE PATH>/data/parseq_lmdb" \
-  data.train_dir=handwriting \
-  data.num_workers=0 \
-  model.batch_size=32 \
-  trainer.accelerator=gpu trainer.devices=1 \
-  trainer.val_check_interval=1.0 \
-  trainer.max_epochs=50
+python src/parseq/train_parseq.py
+# or directly:
+venv_parseq/Scripts/python third_party/parseq/train.py --config-dir=configs/parseq +experiment=parseq_handwriting
 ```
+
+This needs the edits in `patches/parseq_train.patch` (apply once inside `third_party/parseq` with
+`git apply ../../patches/parseq_train.patch`; it includes the seed patch from step 2, so skip that manual edit).
+The table below documents the original reasoning; the current values (higher dropout/LR/augmentation, early
+stopping) live in the config file.
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -247,7 +243,10 @@ evaluated on the same held-out `data/processed/test.csv`:
 | Model | Exact-match | CER |
 |---|---|---|
 | PARSeq, fine-tuned | **93.1%** | **5.9%** |
-| TrOCR, fine-tuned (`checkpoints/best`, unconstrained) | 86.7% | 11.3% |
+
+(This single-run number predates the hyperparameter sweeps, document-level
+cross-validation, and the final production model — see `reports/model_validation.md`
+and the "Final production model" section of `README.md` for the current numbers.)
 
 Verified this wasn't a fluke: reran the eval from the same checkpoint (got
 the identical 93.06%), checked for train/test image-path overlap (zero — no

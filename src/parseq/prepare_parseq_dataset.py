@@ -1,17 +1,19 @@
 """
-Converts our data/processed/{train,val,test}.csv (filename, image_path, text)
+Converts split CSVs (filename, image_path, text) -- by default <paths.processed_dir>/{train,val,test}.csv --
 into the LMDB format PARSeq's training pipeline (third_party/parseq) expects.
 
 PARSeq's strhub.data.dataset.build_tree_dataset recursively globs for any
 data.mdb under a root directory -- it doesn't care about folder naming beyond
 that, so this script writes one LMDB per split under:
 
-    data/parseq_lmdb/train/handwriting/data.mdb
-    data/parseq_lmdb/val/handwriting/data.mdb
-    data/parseq_lmdb/test/handwriting/data.mdb
+    <output-dir>/train/handwriting/data.mdb
+    <output-dir>/val/handwriting/data.mdb
+    <output-dir>/test/handwriting/data.mdb
 
 which matches the root_dir/train_dir structure PARSeq's SceneTextDataModule
-expects (data.root_dir=data/parseq_lmdb, data.train_dir=handwriting).
+expects (data.root_dir=<output-dir>, data.train_dir=handwriting). Defaults
+(output dir = paths.lmdb_dir, folder name = lmdb.dataset_name, map size =
+lmdb.map_size_mb) come from config.yaml.
 
 Deliberately does NOT reuse third_party/parseq/tools/create_lmdb_dataset.py --
 that script hardcodes map_size=1TB, which is harmless on Linux (lazy sparse
@@ -23,25 +25,29 @@ size (--map-size-mb) is generous headroom without tripping that.
 Must be run with the venv_parseq interpreter (needs lmdb, which the main
 project venv doesn't have):
 
-    venv_parseq/Scripts/python src/prepare_parseq_dataset.py
+    venv_parseq/Scripts/python src/parseq/prepare_parseq_dataset.py
 """
 import argparse
 import io
+import sys
 from pathlib import Path
 
 import lmdb
 import pandas as pd
 from PIL import Image
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
+from project_config import cfg, path, resolve  # noqa: E402
+
 ap = argparse.ArgumentParser()
-ap.add_argument("--processed-dir", default="data/processed")
-ap.add_argument("--output-dir", default="data/parseq_lmdb")
-ap.add_argument("--dataset-name", default="handwriting")
-ap.add_argument("--map-size-mb", type=int, default=512)
+ap.add_argument("--processed-dir", default=str(path("processed_dir")))
+ap.add_argument("--output-dir", default=str(path("lmdb_dir")))
+ap.add_argument("--dataset-name", default=cfg["lmdb"]["dataset_name"])
+ap.add_argument("--map-size-mb", type=int, default=cfg["lmdb"]["map_size_mb"])
 args = ap.parse_args()
 
-processed_dir = Path(args.processed_dir)
-output_dir = Path(args.output_dir)
+processed_dir = resolve(args.processed_dir)
+output_dir = resolve(args.output_dir)
 
 
 def create_lmdb(df, out_dir):

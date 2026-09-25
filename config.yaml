@@ -1,25 +1,73 @@
-model_name: "microsoft/trocr-small-handwritten"
-image_dir: "G:/OCR_codes/ocr_dataset_builder/dataset/completed"
-annotation_file: "C:/Users/Christ/Desktop/annotations.xlsx"
-label_column: "Normalize"
-filename_column: "filename"
+# Project configuration: the ONE place to change data locations, split settings, folders, label rules and thresholds.
+#
+# This file holds portable defaults and is committed. Put machine-specific values (your image folder, your annotation
+# workbook, a D: drive for temp files, ...) in `config.local.yaml` next to this file: it is gitignored and is merged
+# on top of this one (see config.example.local.yaml). Set PROJECT_CONFIG=<file> to layer a third file on top.
+# Relative paths are resolved against the project root, so scripts work from any working directory.
+# Command-line flags on individual scripts still override anything here for a single run.
 
+# ---- Data source (used by src/common/prepare_dataset.py) ---------------------------------------------------------
+image_dir: "data/raw/images"                 # folder with the crop images
+annotation_file: "data/raw/annotations.xlsx" # Excel workbook with one row per image
+label_column: "Normalize"                    # column holding the ground-truth text
+filename_column: "filename"                  # column holding the image file name
+
+# Random per-crop split (prepare_dataset.py). Ratios must sum to 1.
 split:
   train: 0.80
   val: 0.10
   test: 0.10
   seed: 25
 
-training:
-  batch_size: 8
-  eval_batch_size: 8
-  learning_rate: 0.00003
-  weight_decay: 0.01
-  epochs: 10
-  warmup_ratio: 0.10
-  gradient_accumulation_steps: 2
-  max_target_length: 16
-  num_workers: 2
-  fp16: true
-  seed: 42
-  save_dir: "checkpoints"
+# ---- Folders (everything the pipeline reads or writes) -----------------------------------------------------------
+paths:
+  processed_dir: data/processed          # train/val/test.csv from prepare_dataset.py (+ ambiguous/freetext/missing)
+  lmdb_dir: data/parseq_lmdb             # LMDB built from processed_dir (matches data.root_dir in the experiment yamls)
+  all_data_dir: data/all_data            # every labelled crop in `train`, for the final model (prepare_alldata.py)
+  all_lmdb_dir: data/all_lmdb            # LMDB built from all_data_dir
+  docsplit_dir: data/docsplit            # document-level splits, one subfolder per seed: seed<N>/
+  docsplit_lmdb_dir: data/docsplit_lmdb  # their LMDBs, seed<N>/
+  outputs_dir: outputs                   # training runs and sweeps
+  reports_dir: reports                   # result tables, logs, validation CSVs
+  models_dir: models                     # exported deployment checkpoints
+  mlflow_db: mlflow.db                   # MLflow tracking store (sqlite)
+
+# ---- Environment -------------------------------------------------------------------------------------------------
+# Only needed if the default temp/cache location is on a drive that is short of space. null = leave the OS default.
+env:
+  tmp_dir: null                          # e.g. "D:/tmp"  -> TMP and TEMP for training subprocesses
+  torch_home: null                       # e.g. "D:/cache/torch" -> where torch.hub caches pretrained weights
+
+# ---- Label rules (shared by data cleaning, inference and the document split) -------------------------------------
+labels:
+  # A "clean" label: a digit run with an optional subpart letter (6b), a Roman numeral, or a bare subpart letter,
+  # optionally wrapped in parens and/or ending in '.' / ')' / '.)'. Anything else is routed to freetext.csv and is
+  # also flagged at inference time as "does not look like a valid label".
+  clean_pattern: '^\(?(?:[0-9]+[a-jA-J]?|[IVXivx]+|[a-jA-J])(?:\.\)|[.)])?\)?\Z'
+  ambiguous_markers: ["ambigous", "ambiguous"]   # reviewer markers, not ground truth; excluded from training
+  excel_artifact_pattern: '_x000[0-9A-Fa-f]_'    # Excel line-break escapes stripped from labels
+  doc_id_pattern: '^(Doc\d+)'                    # first group of the file name = document id (document-level split)
+
+# ---- LMDB packing (prepare_parseq_dataset.py) --------------------------------------------------------------------
+lmdb:
+  dataset_name: handwriting              # folder name under <lmdb>/<split>/ ; must equal data.train_dir in the yamls
+  map_size_mb: 512                       # LMDB map size; keep modest on Windows (see prepare_parseq_dataset.py)
+
+# ---- Document-level split and cross-validation -------------------------------------------------------------------
+docsplit:
+  seed: 42                               # default seed for prepare_docsplit.py
+  tries: 300                             # random document assignments tried; the best-balanced one is kept
+  cv_seeds: [42, 43, 44, 45, 46]         # folds run by docsplit_cv.py
+
+# ---- Inference and review -----------------------------------------------------------------------------------------
+inference:
+  checkpoint: models/parseq_final/parseq_final.ckpt   # production model used by predict.py
+  flag_threshold: 0.5                    # a prediction whose minimum per-character probability is below this is
+                                         # "flagged for review" (eval_parseq.py, summarize_validation.py, predict.py)
+
+# ---- Validation report (validate_models.py, summarize_validation.py) ----------------------------------------------
+validation:
+  batch_size: 64
+  rare_max: 5                            # a label is "rare" if it has <= this many training examples
+  bootstrap_n: 2000                      # bootstrap resamples for the test-accuracy confidence interval
+  ece_bins: 10                           # bins for the expected-calibration-error metric

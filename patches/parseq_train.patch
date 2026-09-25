@@ -1,0 +1,145 @@
+diff --git a/strhub/data/module.py b/strhub/data/module.py
+index 4d6aac7..eb4030c 100644
+--- a/strhub/data/module.py
++++ b/strhub/data/module.py
+@@ -41,6 +41,8 @@ class SceneTextDataModule(pl.LightningDataModule):
+         batch_size: int,
+         num_workers: int,
+         augment: bool,
++        augment_magnitude: int = 5,
++        augment_num_layers: int = 3,
+         remove_whitespace: bool = True,
+         normalize_unicode: bool = True,
+         min_image_dim: int = 0,
+@@ -57,6 +59,8 @@ class SceneTextDataModule(pl.LightningDataModule):
+         self.batch_size = batch_size
+         self.num_workers = num_workers
+         self.augment = augment
++        self.augment_magnitude = augment_magnitude
++        self.augment_num_layers = augment_num_layers
+         self.remove_whitespace = remove_whitespace
+         self.normalize_unicode = normalize_unicode
+         self.min_image_dim = min_image_dim
+@@ -66,12 +70,18 @@ class SceneTextDataModule(pl.LightningDataModule):
+         self._val_dataset = None
+ 
+     @staticmethod
+-    def get_transform(img_size: tuple[int], augment: bool = False, rotation: int = 0):
++    def get_transform(
++        img_size: tuple[int],
++        augment: bool = False,
++        rotation: int = 0,
++        augment_magnitude: int = 5,
++        augment_num_layers: int = 3,
++    ):
+         transforms = []
+         if augment:
+             from .augment import rand_augment_transform
+ 
+-            transforms.append(rand_augment_transform())
++            transforms.append(rand_augment_transform(augment_magnitude, augment_num_layers))
+         if rotation:
+             transforms.append(lambda img: img.rotate(rotation, expand=True))
+         transforms.extend([
+@@ -84,7 +94,12 @@ class SceneTextDataModule(pl.LightningDataModule):
+     @property
+     def train_dataset(self):
+         if self._train_dataset is None:
+-            transform = self.get_transform(self.img_size, self.augment)
++            transform = self.get_transform(
++                self.img_size,
++                self.augment,
++                augment_magnitude=self.augment_magnitude,
++                augment_num_layers=self.augment_num_layers,
++            )
+             root = PurePath(self.root_dir, 'train', self.train_dir)
+             self._train_dataset = build_tree_dataset(
+                 root,
+diff --git a/train.py b/train.py
+index e4c3aff..b93905b 100755
+--- a/train.py
++++ b/train.py
+@@ -22,9 +22,10 @@ from omegaconf import DictConfig, open_dict
+ 
+ import torch
+ 
+-from pytorch_lightning import Trainer
+-from pytorch_lightning.callbacks import ModelCheckpoint, StochasticWeightAveraging
+-from pytorch_lightning.loggers import TensorBoardLogger
++from mlflow.system_metrics.system_metrics_monitor import SystemMetricsMonitor
++from pytorch_lightning import Trainer, seed_everything
++from pytorch_lightning.callbacks import EarlyStopping, ModelCheckpoint, StochasticWeightAveraging
++from pytorch_lightning.loggers import MLFlowLogger, TensorBoardLogger
+ from pytorch_lightning.strategies import DDPStrategy
+ from pytorch_lightning.utilities.model_summary import summarize
+ 
+@@ -52,6 +53,7 @@ def get_swa_lr_factor(warmup_pct, swa_epoch_start, div_factor=25, final_div_fact
+ 
+ @hydra.main(config_path='configs', config_name='main', version_base='1.2')
+ def main(config: DictConfig):
++    seed_everything(config.get('seed', 42), workers=True)
+     trainer_strategy = 'auto'
+     with open_dict(config):
+         # Resolve absolute path to data.root_dir
+@@ -90,6 +92,10 @@ def main(config: DictConfig):
+         save_last=True,
+         filename='{epoch}-{step}-{val_accuracy:.4f}-{val_NED:.4f}',
+     )
++    callbacks = [checkpoint]
++    # Optional early stopping, enabled by an `early_stopping:` block in the experiment config.
++    if config.get('early_stopping') is not None:
++        callbacks.append(EarlyStopping(monitor='val_accuracy', mode='max', **config.early_stopping))
+     swa_epoch_start = 0.75
+     swa_lr = config.model.lr * get_swa_lr_factor(config.model.warmup_pct, swa_epoch_start)
+     swa = StochasticWeightAveraging(swa_lr, swa_epoch_start)
+@@ -100,12 +106,47 @@ def main(config: DictConfig):
+     )
+     trainer: Trainer = hydra.utils.instantiate(
+         config.trainer,
+-        logger=TensorBoardLogger(cwd, '', '.'),
++        logger=[
++            TensorBoardLogger(cwd, '', '.'),
++            # Tracking DB location comes from the `mlflow_db` config key (default: mlflow.db at the project root).
++            # Hydra changes cwd, so a relative path is resolved against the launch directory; an absolute path is used as is.
++            # View with: mlflow ui --backend-store-uri sqlite:///mlflow.db
++            MLFlowLogger(
++                experiment_name=config.get('mlflow_experiment', 'parseq'),
++                run_name=Path(cwd).name,
++                tracking_uri='sqlite:///' + (Path(hydra.utils.get_original_cwd()) / config.get('mlflow_db', 'mlflow.db')).as_posix(),
++            ),
++        ],
+         strategy=trainer_strategy,
+         enable_model_summary=False,
+-        callbacks=[checkpoint, swa],
++        callbacks=[*callbacks, swa] if config.get('swa', True) else callbacks,
+     )
+-    trainer.fit(model, datamodule=datamodule, ckpt_path=config.ckpt_path)
++    mlflow_logger = next(lg for lg in trainer.loggers if isinstance(lg, MLFlowLogger))
++    client, run_id = mlflow_logger.experiment, mlflow_logger.run_id
++
++    # System metrics (CPU, RAM, disk, GPU util/memory/power). The Lightning logger bypasses mlflow.start_run(),
++    # so MLflow's automatic system-metrics thread has to be started by hand. Disable with system_metrics_interval=null.
++    monitor = None
++    if config.get('system_metrics_interval') is not None:
++        monitor = SystemMetricsMonitor(
++            run_id, sampling_interval=config.system_metrics_interval, tracking_uri=mlflow_logger._tracking_uri
++        )
++        monitor.start()
++    try:
++        trainer.fit(model, datamodule=datamodule, ckpt_path=config.ckpt_path)
++    finally:
++        if monitor is not None:
++            monitor.finish()
++
++    # Lightning's last.ckpt is only refreshed when a top-k checkpoint updates, so it can be many epochs stale.
++    # Always keep the true final-epoch weights explicitly.
++    trainer.save_checkpoint(str(Path(cwd) / 'checkpoints' / 'final.ckpt'))
++
++    # Record what produced this run: the resolved Hydra config and the best checkpoint.
++    client.log_artifact(run_id, str(Path(cwd) / 'config' / 'config.yaml'), artifact_path='config')
++    if checkpoint.best_model_path:
++        client.set_tag(run_id, 'best_checkpoint', checkpoint.best_model_path)
++        client.log_metric(run_id, 'best_val_accuracy', float(checkpoint.best_model_score))
+ 
+ 
+ if __name__ == '__main__':

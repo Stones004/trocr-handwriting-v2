@@ -1,14 +1,32 @@
+# Environments
 .venv/
+venv/
+venv_parseq/
+
+# Python
 __pycache__/
 *.pyc
-checkpoints/
+
+# Machine-specific config overrides (copy config.example.local.yaml to config.local.yaml)
+config.local.yaml
+
+# Local tooling / secrets
+.claude/
+.vscode/
+.env
+*.db
+*.bak
+
+# External / vendored (recreated by docs/PARSEQ_REPLICATION.md; local edits live in patches/)
+third_party/
+
+# Data and generated artifacts
+data/
 outputs/
-data
+models/
+reports/
 *.log
-preprocess_test_results
-error_analysis.csv
-venv
-checkpoints
-checkpoints_02-09
-venv_parseq
-third_party
+
+# MLflow tracking store
+mlflow.db
+mlruns/
