@@ -132,6 +132,24 @@ Screening (seed 42): real/words 10% = 93.7/87.3, 20% = 93.9/89.3, 30% = 93.9/89.
 - **Confound:** replay also removes synthetic number rows (at 30%, 39% of them). Real test was not hurt, but this was not separated from the effect of adding words.
 - 10% was only screened with one seed.
 
+## ROI check on the user's own folder (226 crops, no verified labels)
+
+Script `src/exp_oct/roi_compare.py`, per-crop table `outputs/exp_oct/roi_check/roi_compare.csv`. 142 crops are from documents Doc0729-0775, 84 are screenshots.
+Only 120 of the document crops have a reading (Claude's, **unverified**, archived in `docs/log/newdoc_labels/`); the screenshots have none.
+
+| agreement with the unverified reading | master_v3 | baseline_s44 | replay30_s44 |
+|---|---|---|---|
+| 56 crops of documents master_v3 never trained on (Doc0729, 0757, 0771, 0773) | 48/56 = 85.7% | 49/56 = 87.5% | **52/56 = 92.9%** |
+| 64 crops of documents master_v3 DID train on (not a fair test for master_v3) | 64/64 | 56/64 | 58/64 |
+
+Caveats: labels unverified, 56 crops (Wilson interval about +-9 points), one seed. The three held-out differences are 1-4 crops, so this is suggestive, not proof; no accuracy claim is made.
+Mean confidence is lower for replay30 (0.94 vs 0.96 on documents, 0.86 vs 0.91 on screenshots), more crops fall under 0.9 (25 vs 14 on documents), and it produces more non-label-shaped
+outputs (`Aad`, `Addi`, `08l`, `i1a`: 8 vs 4), consistent with its word training. 34 of 226 predictions differ from master_v3. Single crops flip between replay seeds (`Doc0752_page_003_roi_2`: b / C / 5), so
+individual ROI results are seed-sensitive.
+
+The review_queue.csv the user pasted could NOT be reproduced with any of the exported replay30 seeds (stretch or pad resize); e.g. `Doc0757_page_003_roi_1` gives 3 / 0.983 there but b / 0.51-0.74 here.
+Its pipeline (OCR_codes) probably preprocesses or loads weights differently; unverified.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
