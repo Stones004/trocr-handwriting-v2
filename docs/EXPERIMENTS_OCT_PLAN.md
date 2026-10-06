@@ -1,5 +1,28 @@
 # EXPERIMENTS_OCT: Execution Plan (session-by-session)
 
+## REVISED PLAN (2026-10-06, after Sessions 0-2)
+
+**Done:** Session 0 (tools, gate passed), Session 1 (baseline 94.6 +- 0.8 real / 40.1 words; WiSE-FT a=0.9 and soups), Session 2 (replay: 30% recommended, 94.5 real / 89.4 words).
+**Status: PAUSED** while the 30% replay model is tried on real ROIs. Resume on request.
+
+Why the order changes: real-test accuracy did not move with any method (noise floor +-0.8), and replay already solved word recovery, so L2-SP (same goal) is now low value.
+The open goals are trustworthy confidence (coverage at 99% precision, noisy at +-9.5) and whether more data would help real accuracy.
+
+| New order | What | Runs | ~Time | Why now |
+|---|---|---|---|---|
+| **Next: Session 3 (was 4)** | Temperature scaling on existing models first (no training, minutes); then label smoothing 0.05 / 0.1 screening + confirm | 6 | ~2 h | Targets confidence, the main open goal |
+| Session 4 (was 5) | Learning curve: 25/50/75/100% of train documents | 12 (7.5 run-equivalents) | ~2.5 h | Says whether real accuracy is data-limited or plateaued |
+| Session 5 (was 3) | L2-SP (optional: run only if still wanted) | 7 + calibration | ~2.3 h | Same goal as replay / WiSE-FT |
+| Session 6 | Combination (replay 30% + best of the above, 3 seeds), SSL plan only, final report | 3 | ~1.5 h | unchanged |
+
+Model for ROI testing (exported 2026-10-06): `outputs/exp_oct/models/parseq_replay30_s{42,43,44}/parseq_replay30_s{seed}.ckpt` (95 MB each, weights-only). Primary: **s44**
+(94.5% real, 89.3% words; closest to the 3-seed mean). Checked: the exported file reproduces 358/379 on the test set.
+
+---
+
+(Original plan below; session numbers there refer to the original order.)
+
+
 Companion to the task spec. This file says **what runs in which order, how long each
 session takes, and what decision follows each experiment**. Results go in
 `docs/EXPERIMENTS_OCT.md`; outputs in `outputs/exp_oct/`; branch `exp_oct`.
