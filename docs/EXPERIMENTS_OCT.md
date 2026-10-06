@@ -220,6 +220,34 @@ accepts 37-39% of crops at 98% precision instead of 77% at 91.6%. That is mostly
 - **The "coverage at 99% precision with a threshold from val" metric is fragile**: it depends on how hard the 17 val documents happen to be (val accuracy 86% vs test 94.5%), which explains the 9.5-point seed spread and the large swings above. Treat coverage claims with caution; precision-at-fixed-coverage is more stable.
 - Nothing from this session goes into the combination except possibly temperature scaling refit on in-domain data.
 
+## PARSeq pipeline vs Chandra OCR on the 226 reviewed ROI crops
+
+Script `src/exp_oct/chandra_compare.py`; per-crop table `outputs/exp_oct/roi_check/chandra_vs_parseq.csv`; Chandra raw text (transcribed from the user's Colab log) `outputs/exp_oct/roi_check/chandra_raw.py`.
+PARSeq = the `prediction` column of the user's review queue (their pipeline model; exact match). Truth = the user's `corrected_text`. Chandra writes the marks (`a.1.`, `(b)`, `6)`, `Q 16]`) and sometimes LaTeX, words or other scripts,
+while the labels are characters only, so Chandra is scored after a stated normalisation: **strict** = Unicode NFKC, keep only A-Za-z0-9, case-sensitive; **lenient** = strict, then drop a leading Q/q/A/a directly before a digit and ignore case.
+Transcription of the pasted log into the file was done by hand; 226/226 crops matched.
+
+| method | all 226 (Wilson 95%) | document crops (142) | screenshots (84) |
+|---|---|---|---|
+| PARSeq pipeline, exact | **185 = 81.9%** [76.3-86.3] | **128 = 90.1%** | **57 = 67.9%** |
+| Chandra, raw text exactly as printed | 30 = 13.3% | | |
+| Chandra, strict normalisation | 99 = 43.8% [37.5-50.3] | 69 = 48.6% | 30 = 35.7% |
+| Chandra, lenient normalisation | 128 = 56.6% [50.1-62.9] | 86 = 60.6% | 42 = 50.0% |
+| Chandra, lenient + circled/Phi marker before digits ignored (sensitivity) | 132 = 58.4% | 86 = 60.6% | 46 = 54.8% |
+
+**Agreement (PARSeq exact vs Chandra lenient):** both right 113, only PARSeq right 72, only Chandra right 15, both wrong 26 (oracle either-right 200/226 = 88.5%). The two give the same string on 116 crops and are right 97.4% of the time there; on the 110 where they differ, PARSeq is right 72 times, Chandra 15, neither 23.
+
+**How they differ**
+- Chandra reads *what is written*, marks included: 141 of 226 outputs contain dots/brackets/Q prefix, and its raw output matches the label exactly on only 30 crops. PARSeq was trained to return the characters only, so it matches by design.
+- Chandra's failure modes: 22 outputs are not label-like at all (13 non-Latin or symbol characters such as `س`, `司`, `ج`, `⊙`; 6 LaTeX/HTML such as `\partial_1`, `\mathcal{B}`, `<math>`; 3 sentences or runaway repetition, one crop returned about 150 copies of `Ⓒ`). It confuses the small letter labels with digits (`b` -> `6`, `6)`, `(6)`; `c` -> `(5)`; 13 of the 52 single-letter crops lost this way), and on documents it often returns pieces of neighbouring text (`1.363`, `4.65`, `R.J. a.`).
+- Where Chandra beats PARSeq (15 crops) it is mostly on **bracketed or prefixed letters PARSeq reads as digits**: `(b)` vs `3`, `(A)` vs `4`, `A.` vs `9`; on the marker word `Add:` (PARSeq `Mad`); and on screenshots where it keeps the leading digit PARSeq drops (`Q 75` vs `15`, `Q 34)` vs `24`, `(16)` vs `1b`, `1. a)` vs `a`).
+- Both fail on: the word `or` (PARSeq `1`, Chandra LaTeX), the second `Add` (`Mad` vs `ddq ::`), the letters/digits on tight screenshot crops (`12`, `19`, `45`, `46`, `18a`, `10c`, `15e`, `17d`).
+- Screenshots: PARSeq 67.9% vs Chandra 50-55%; the leading-character problem is partly shared and partly PARSeq-specific (Chandra recovers about 8 of PARSeq's lost-leading-digit crops).
+
+**Using them together (post-hoc, one set, not a validated recipe):** routing the crops PARSeq is unsure about to Chandra (PARSeq if conf >= 0.9 else Chandra) gives 178/226 = 78.8% and sends 17% of crops to Chandra: **lower than PARSeq alone (81.9%)**, because Chandra's answer is worse than PARSeq's even on its low-confidence crops. Agreement between the two is a much stronger signal than either confidence: when both agree (116 crops) the answer is correct 97.4% of the time.
+
+Caveats: 226 crops, one reviewer, few writers; Chandra's cost, prompt and settings were not controlled (API via Colab), and the normalisation choices above favour Chandra; the PARSeq model is the user's pipeline model whose weights are unknown to me (it scores 185 vs 181 for master_v3 here).
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
