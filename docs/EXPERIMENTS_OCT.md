@@ -11,7 +11,7 @@ Live log (updates every minute while a run is going): `Get-Content outputs\exp_o
 | 1 | P0 baseline x3 seeds, P1 WiSE-FT, soups | **DONE** (baseline 94.6 +- 0.8; WiSE-FT a=0.9 recommended; soup no gain) |
 | 2 | P2 Replay | **DONE** (30% replay recommended: real 94.5, words 89.4) |
 | 3 | P4 Temperature scaling + label smoothing (moved up) | not started (PAUSED, see plan) |
-| 4 | P4 Label smoothing + temperature | not started |
+| 4 | P5 Learning curve | not started |
 | 5 | P3 L2-SP (moved to optional) | not started |
 | 6 | Combination, SSL plan, final report | not started |
 
