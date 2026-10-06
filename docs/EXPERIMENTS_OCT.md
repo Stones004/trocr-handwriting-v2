@@ -10,7 +10,7 @@ Live log (updates every minute while a run is going): `Get-Content outputs\exp_o
 | 0 | Infrastructure, baseline reproduction gate | **DONE, gate passed** |
 | 1 | P0 baseline x3 seeds, P1 WiSE-FT, soups | **DONE** (baseline 94.6 +- 0.8; WiSE-FT a=0.9 recommended; soup no gain) |
 | 2 | P2 Replay | **DONE** (30% replay recommended: real 94.5, words 89.4) |
-| 3 | P4 Temperature scaling + label smoothing (moved up) | not started (PAUSED, see plan) |
+| 3 | P4 Temperature scaling + label smoothing | **DONE** (both negative / not adopted; see Phase 4) |
 | 4 | P5 Learning curve | not started |
 | 5 | P3 L2-SP (moved to optional) | not started |
 | 6 | Combination, SSL plan, final report | not started |
@@ -167,6 +167,59 @@ By subset (correct/n, exact %):
   retrained models and 86-87% for master_v3 / the pipeline: on new documents confidence is clearly over-optimistic (consistent with the ECE and the 94% unseen-document CV in the model report). This strengthens the case for Session 3 (calibration).
 - Caveat: the labels are the user's corrections of the model outputs, so they may lean toward the model's reading in ambiguous cases; the held-out/screenshot sets are small and from few writers.
 
+## Phase 4: label smoothing and temperature scaling (Session 3)
+
+**Label smoothing patch** (`patches/exp_oct.patch`, on top of `parseq_train.patch`, applied to `third_party/parseq`; off by default): `F.cross_entropy(..., ignore_index=pad, label_smoothing=eps)` in `PARSeq.training_step`.
+Tests (`tests/test_label_smoothing.py`): with eps=0 the loss equals the original to 1e-6 on a real batch (0.052418 vs 0.052418); logits at pad positions do not affect the smoothed loss; EOS handling unchanged.
+Note torch spreads the smoothing mass over all 97 classes including the special tokens (standard behaviour). Seed 42 screening of eps 0.05 and 0.1; eps 0.05 confirmed with seeds 43/44; **0.1 was not confirmed** (clearly worse: 3.4% coverage, 93.9% real; confirming it is 2 more runs on request).
+
+| (mean +- std) | real test % | words % | coverage@99 % | precision on accepted % | confident errors | ECE | NLL |
+|---|---|---|---|---|---|---|---|
+| baseline (3 seeds) | 94.6 +- 0.8 | 40.1 +- 2.5 | 49.5 +- 9.5 | 99.3 +- 0.2 | 6.0 +- 2.6 | 0.034 | 0.144 |
+| replay 30% (3 seeds) | 94.5 +- 0.7 | 89.4 +- 0.5 | 50.9 +- 10.7 | 99.5 +- 0.4 | 9.0 +- 1.0 | 0.036 | 0.143 |
+| **label smoothing 0.05 (3 seeds)** | 94.6 +- 0.3 | **25.6 +- 2.0** | **9.9 +- 6.3** | 98.5 +- 1.5 | 4.0 +- 0.0 | 0.047 | 0.153 |
+| label smoothing 0.1 (seed 42) | 93.9 | 18.7 | 3.4 | 92.3 | 4 | 0.074 | 0.197 |
+
+**Temperature scaling** (`src/exp_oct/phase4_temperature.py`). One scalar T per model, **fitted on the 384 val crops only** (no test or ROI data used for fitting), applied to test. Two objectives: A = token NLL (the literal spec), B = crop-level
+binary NLL of "crop correct" (added after seeing A; both give nearly the same T). Accuracy is unchanged by construction. Means over 3 seeds:
+
+| model | setting | T | test ECE | test NLL | coverage@99 % | confident errors |
+|---|---|---|---|---|---|---|
+| baseline | before | 1 | 0.034 | 0.144 | 49.6 | 6.0 |
+| baseline | T fitted on val (A) | 2.08 | 0.060 | 0.145 | 42.4 | 2.0 |
+| replay 30% | before | 1 | 0.036 | 0.143 | 50.9 | 9.0 |
+| replay 30% | T fitted on val (A) | 2.05 | 0.063 | 0.148 | 54.6 | 2.0 |
+| label smoothing 0.05 | before | 1 | 0.047 | 0.153 | 9.2 | 4.0 |
+| label smoothing 0.05 | T fitted on val (A) | 1.00 | 0.048 | 0.154 | 9.3 | 4.0 |
+
+**Why temperature scaling did not help on test.** The val set (17 documents) is much harder than the test set: models score about 86% on val (ECE 0.10, overconfident) but 94.5% on test (ECE 0.034, well calibrated).
+A T fitted on val (about 2) therefore makes test *under*-confident and raises test ECE. This is document-to-document variation, not a bug (the same T from two different objectives; the logic is checked by `tests/test_eval_suite.py` and by the identical argmax).
+Label smoothing already does the calibration job on val: its fitted T is about 1.0.
+
+**On the user's 226 reviewed ROI crops** (a third, independent set where models are overconfident; `src/exp_oct/roi_temperature.py`, mean of 6 baseline/replay30 models): T fitted on val lowers ECE 0.105 -> 0.082-0.092, confident errors (conf >= 0.9) 14.7 -> 1.6, and at conf >= 0.9 it
+accepts 37-39% of crops at 98% precision instead of 77% at 91.6%. That is mostly the same ranking with every confidence moved down, so it does not improve the coverage/precision trade-off; it makes the number "0.9" mean about 0.9 on new documents.
+
+**Coverage vs precision** (`outputs/exp_oct/coverage_vs_precision.png`; precision of the accepted crops at fixed coverage, mean of 3 seeds)
+
+| coverage | 50% | 70% | 80% | 90% |
+|---|---|---|---|---|
+| real test: baseline | 99.1 | 99.2 | 99.2 | 98.4 |
+| real test: replay 30% | 99.5 | 99.2 | 99.2 | 98.0 |
+| real test: label smoothing 0.05 | 98.9 | 99.1 | 99.1 | 98.5 |
+| ROI crops: baseline (acc 80.8) | 96.5 | 92.8 | 91.0 | 85.6 |
+| ROI crops: replay 30% (acc 83.3) | 97.6 | 94.3 | 90.6 | 88.4 |
+| ROI crops: label smoothing 0.05 (acc 82.9) | 96.2 | 94.9 | 92.1 | 88.5 |
+
+![coverage vs precision](../outputs/exp_oct/coverage_vs_precision.png)
+
+**Decisions (Session 3 gate)**
+- **Label smoothing: negative result.** Real test unchanged (94.6), words fall 40.1 -> 25.6, and coverage at 99% falls 49.5 -> 9.9. Its ranking of crops is no better: precision at fixed coverage matches the baseline on the test set (98.9-99.1 vs 99.1-99.2),
+  and on ROI crops it is within 1-3 points (ECE 0.06 vs 0.105 there, but that is the confidence shift, not a better ordering). The low "coverage at 99%" comes from capped confidences meeting a val-chosen threshold, not from worse accuracy. **Not adopted.**
+- **Temperature scaling with one T fitted on this val set: not adopted as a default.** It worsens test calibration because val and test differ. The calibration data has to resemble the deployment documents; the ROI result shows it can help there.
+  Recommendation: refit T on a reviewed sample of the actual production documents, and re-pick any accept threshold on the same sample.
+- **The "coverage at 99% precision with a threshold from val" metric is fragile**: it depends on how hard the 17 val documents happen to be (val accuracy 86% vs test 94.5%), which explains the 9.5-point seed spread and the large swings above. Treat coverage claims with caution; precision-at-fixed-coverage is more stable.
+- Nothing from this session goes into the combination except possibly temperature scaling refit on in-domain data.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -184,6 +237,10 @@ Every run: config, seed, steps, wall time, checkpoint, git commit (from each run
 | replay_p20_s44 | 44 | 6570 | 20.0 | 93.9% | 87.7% | 64.1% | `outputs\exp_oct\replay_p20_s44\checkpoints\final.ckpt` | 3dfea8b+uncommitted |
 | replay_p30_s43 | 43 | 6570 | 19.0 | 95.3% | 90.0% | 40.4% | `outputs\exp_oct\replay_p30_s43\checkpoints\final.ckpt` | 3dfea8b+uncommitted |
 | replay_p30_s44 | 44 | 6570 | 19.0 | 94.5% | 89.3% | 50.7% | `outputs\exp_oct\replay_p30_s44\checkpoints\final.ckpt` | 3dfea8b+uncommitted |
+| ls005_s42 | 42 | 6570 | 20.0 | 95.0% | 23.3% | 16.6% | `outputs\exp_oct\ls005_s42\checkpoints\final.ckpt` | ead9580+uncommitted |
+| ls010_s42 | 42 | 6570 | 20.0 | 93.9% | 18.7% | 3.4% | `outputs\exp_oct\ls010_s42\checkpoints\final.ckpt` | ead9580+uncommitted |
+| ls005_s43 | 43 | 6570 | 20.0 | 94.5% | 26.0% | 4.2% | `outputs\exp_oct\ls005_s43\checkpoints\final.ckpt` | ead9580+uncommitted |
+| ls005_s44 | 44 | 6570 | 20.0 | 94.5% | 27.3% | 8.7% | `outputs\exp_oct\ls005_s44\checkpoints\final.ckpt` | ead9580+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
 
