@@ -132,23 +132,40 @@ Screening (seed 42): real/words 10% = 93.7/87.3, 20% = 93.9/89.3, 30% = 93.9/89.
 - **Confound:** replay also removes synthetic number rows (at 30%, 39% of them). Real test was not hurt, but this was not separated from the effect of adding words.
 - 10% was only screened with one seed.
 
-## ROI check on the user's own folder (226 crops, no verified labels)
+## ROI check on the user's own crops (226 crops, reviewed ground truth)
 
-Script `src/exp_oct/roi_compare.py`, per-crop table `outputs/exp_oct/roi_check/roi_compare.csv`. 142 crops are from documents Doc0729-0775, 84 are screenshots.
-Only 120 of the document crops have a reading (Claude's, **unverified**, archived in `docs/log/newdoc_labels/`); the screenshots have none.
+Truth = `corrected_text` of `D:/OCR_codes/data/roi_watch/review_queue.csv`, reviewed by the user for all 226 crops (142 document crops, 84 screenshots). Script `src/exp_oct/roi_score.py`;
+per-crop predictions of every model: `outputs/exp_oct/roi_check/roi_scored.csv`. Exact match, case-sensitive. "pipeline" = the `prediction` column of the user's own run (which weights it used is unknown).
+Document crops of Doc0750/0752/0755/0767/0769/0775 were in master_v3's training set (and probably the pipeline's); the baseline/replay models (retrained on the current dataset) never saw any of these crops.
 
-| agreement with the unverified reading | master_v3 | baseline_s44 | replay30_s44 |
+| model | correct / 226 | exact % [Wilson 95%] | confident errors (conf >= 0.9) | accepted at conf >= 0.9 | precision of accepted |
+|---|---|---|---|---|---|
+| pipeline (user's run) | 185 | 81.9 [76.3-86.3] | 24 | 83% | 87.2% |
+| master_v3 | 181 | 80.1 [74.4-84.8] | 27 | 84% | 85.8% |
+| baseline (3 seeds) | 181 / 183 / 184 | **80.8 +- 0.7** | 16.7 +- 1.5 | 80% | 90-92% |
+| replay 20% (3 seeds) | 187 / 187 / 191 | **83.3 +- 1.0** | 13.0 +- 2.6 | 76% | 91-94% |
+| replay 30% (3 seeds) | 188 / 188 / 189 | **83.3 +- 0.3** | 12.7 +- 2.1 | 74% | 91-94% |
+
+By subset (correct/n, exact %):
+
+| model | held-out documents (68; never in any training) | documents master_v3 trained on (74) | screenshots (84) |
 |---|---|---|---|
-| 56 crops of documents master_v3 never trained on (Doc0729, 0757, 0771, 0773) | 48/56 = 85.7% | 49/56 = 87.5% | **52/56 = 92.9%** |
-| 64 crops of documents master_v3 DID train on (not a fair test for master_v3) | 64/64 | 56/64 | 58/64 |
+| pipeline | 59 (86.8) | 69 (93.2) | 57 (67.9) |
+| master_v3 | 56 (82.4) | 66 (89.2, leaky) | 59 (70.2) |
+| baseline s42/s43/s44 | 58 / 60 / 59 (85.3 / 88.2 / 86.8) | 67 / 65 / 63 | 58 / 59 / 59 |
+| replay 30% s42/s43/s44 | 60 / 62 / 62 (88.2 / 91.2 / 91.2) | 69 / 66 / 68 | 60 / 60 / 58 |
+| replay 20% s42/s43/s44 | 61 / 58 / 59 | 67 / 66 / 68 | 63 / 63 / 60 |
 
-Caveats: labels unverified, 56 crops (Wilson interval about +-9 points), one seed. The three held-out differences are 1-4 crops, so this is suggestive, not proof; no accuracy claim is made.
-Mean confidence is lower for replay30 (0.94 vs 0.96 on documents, 0.86 vs 0.91 on screenshots), more crops fall under 0.9 (25 vs 14 on documents), and it produces more non-label-shaped
-outputs (`Aad`, `Addi`, `08l`, `i1a`: 8 vs 4), consistent with its word training. 34 of 226 predictions differ from master_v3. Single crops flip between replay seeds (`Doc0752_page_003_roi_2`: b / C / 5), so
-individual ROI results are seed-sensitive.
-
-The review_queue.csv the user pasted could NOT be reproduced with any of the exported replay30 seeds (stretch or pad resize); e.g. `Doc0757_page_003_roi_1` gives 3 / 0.983 there but b / 0.51-0.74 here.
-Its pipeline (OCR_codes) probably preprocesses or loads weights differently; unverified.
+**Reading**
+- Replay is **about 2.5 points better than the retrained baseline on real new crops** (83.3 vs 80.8) and has fewer confident errors (12.7 vs 16.7). The gain is the same sign in every seed (all 6 replay runs >= 82.7; all 3 baselines <= 81.4),
+  but it is 3-6 crops of 226, a single reviewed set, and mostly in the held-out documents (91.2 vs 86.8-88.2). A suggestive result that agrees with the word results; not a proven accuracy gain, and unlike the 379-crop test (where replay was -0.1 to -1.0), here it helps.
+- **Real handwritten words are NOT solved.** The only word-like truths are `or` and two `Add`. `or` is read as `1` / `01` by every model. `Add` becomes `Aelo`, `Aadi`, `Adds`, `Aad`, `Addi` (replay) versus `42d`, `20`, `ii` (baseline): replay moves the
+  output toward the right letters and the right kind of string, but **no model gets any of them exactly right**. The 89% word-test score is therefore on synthetic words only; on real ones the evidence is 0 of 3.
+- **Screenshots (84) are the weak spot for every model (68-75%)**, and the errors are mostly a **dropped or wrong leading character** that all models share: `12 -> 2`, `19 -> 1`, `45 -> 5`, `15 -> 75`, `10c -> 0c`, `17d -> d`, `1a -> a`, `15e -> 5e`.
+  This points at the crops (left edge cut or tightly cropped, wide aspect squeezed by the 32x128 stretch) rather than at any method tested; not investigated further.
+- **The 99%-precision operating point does not transfer.** Applying each model's val-derived threshold (T = 0.999-1.000) accepts only 12-31% of these crops, with precision 96-100% (0-2 errors accepted). Simply accepting conf >= 0.9 gives precision of only 91-94% for the
+  retrained models and 86-87% for master_v3 / the pipeline: on new documents confidence is clearly over-optimistic (consistent with the ECE and the 94% unseen-document CV in the model report). This strengthens the case for Session 3 (calibration).
+- Caveat: the labels are the user's corrections of the model outputs, so they may lean toward the model's reading in ambiguous cases; the held-out/screenshot sets are small and from few writers.
 
 ## Run ledger
 
