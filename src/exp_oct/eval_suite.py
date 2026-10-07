@@ -92,6 +92,10 @@ def tier_table(conf, correct):
     return rows
 
 
+def is_ctc(model):
+    return hasattr(model, "blank_id")
+
+
 # ---------------------------------------------------------------- model passes -------------------------------------------
 @torch.no_grad()
 def run_model(model, df, tf, device, bs=64):
@@ -103,7 +107,11 @@ def run_model(model, df, tf, device, bs=64):
         lg = model(x).float()
         pr, cp = model.tokenizer.decode(lg.softmax(-1))
         preds += [s.strip() for s in pr]
-        confs += [c.min().item() if len(c) else 0.0 for c in cp]
+        if is_ctc(model):                      # CTC models (CRNN): confidence per decoded character run, blanks ignored
+            from crnn_support import ctc_confidence
+            confs += ctc_confidence(lg.softmax(-1), model.blank_id).tolist()
+        else:
+            confs += [c.min().item() if len(c) else 0.0 for c in cp]
         logits.append(lg.cpu())
     return preds, np.array(confs), torch.cat(logits)
 
@@ -180,6 +188,17 @@ def evaluate_model(model, name, out_dir, device=None, with_val=True, with_words=
         tabs[k].to_csv(out_dir / f"crops_{k}.csv", index=False)
         res[k] = _acc_block(tabs[k])
         if k in ("test", "val"):
+            if is_ctc(model):                  # CTC: mean per-character negative log-likelihood of the label (ctc_loss), no token targets / temperature
+                labs = tabs[k]["label"].tolist()
+                lp = lg.log_softmax(-1).transpose(0, 1)
+                tgt = model.tokenizer.encode(labs)
+                tl = torch.as_tensor([len(x) for x in labs])
+                il = torch.full((lg.shape[0],), lg.shape[1], dtype=torch.long)
+                per = torch.nn.functional.ctc_loss(lp, tgt, il, tl, blank=model.blank_id, reduction="none", zero_infinity=True)
+                res[k]["nll"] = float((per / tl.clamp(min=1)).mean())
+                res[k]["ece"] = ece(conf, tabs[k]["correct"])
+                torch.save({"logits": lg.half()}, out_dir / f"logits_{k}.pt")
+                continue
             tg = token_targets(model, tabs[k]["label"], lg.shape[1])
             res[k]["nll"] = nll(lg, tg, model.tokenizer.pad_id, temperature or 1.0)
             res[k]["ece"] = ece(conf, tabs[k]["correct"])

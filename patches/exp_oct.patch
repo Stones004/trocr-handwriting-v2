@@ -23,3 +23,17 @@
              loss_numel += n
              # After the second iteration (i.e. done with canonical and reverse orderings),
              # remove the [EOS] tokens for the succeeding perms
+--- a/train.py
++++ b/train.py
+@@ -98,8 +98,9 @@
+     # Optional `+freeze=encoder|half` (lock the whole ViT encoder / its patch embedding + first half of the blocks) and `+early_lr_mult=0.1`
+     # (the same early layers learn at this fraction of the learning rate instead of being locked).
+     freeze, mult = config.get('freeze', 'none'), float(config.get('early_lr_mult', 1.0))
+-    enc = (model.model if hasattr(model, 'model') else model).encoder
+-    early = [p for n, p in enc.named_parameters() if freeze == 'encoder' or not n.startswith('blocks.') or int(n.split('.')[1]) < len(enc.blocks) // 2]
++    # exp_oct: CRNN and other non-ViT models have no `.encoder`; the freeze options then do not apply
++    enc = getattr(model.model if hasattr(model, 'model') else model, 'encoder', None)
++    early = [p for n, p in enc.named_parameters() if freeze == 'encoder' or not n.startswith('blocks.') or int(n.split('.')[1]) < len(enc.blocks) // 2] if enc is not None else []
+     if freeze in ('encoder', 'half'):
+         for p in early:
+             p.requires_grad = False
