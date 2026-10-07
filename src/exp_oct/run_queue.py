@@ -32,14 +32,14 @@ def git_commit():
     return r.stdout.strip() + ("+uncommitted" if dirty else "")
 
 
-def run_one(name, seed=42, lmdb=DEFAULT_LMDB, epochs=None, overrides=(), est_min=25, note=""):
+def run_one(name, seed=42, lmdb=DEFAULT_LMDB, epochs=None, overrides=(), est_min=25, note="", resize_mode="stretch"):
     run_dir = OUT / name
     if (run_dir / "done.json").exists():
         log(f"SKIP {name} (done.json exists)")
         return json.loads((run_dir / "done.json").read_text())
     run_dir.mkdir(parents=True, exist_ok=True)
     ov = [f"+seed={seed}", f"data.root_dir={Path(lmdb).as_posix()}", f"hydra.run.dir={run_dir.as_posix()}", "+mlflow_experiment=exp_oct",
-          *([f"trainer.max_epochs={epochs}"] if epochs else []), *overrides]
+          *([f"trainer.max_epochs={epochs}"] if epochs else []), *([f"+data.resize_mode={resize_mode}"] if resize_mode != "stretch" else []), *overrides]
     cmd = train_command(ov)
     (run_dir / "command.txt").write_text(" ".join(shlex.quote(c) for c in cmd), encoding="utf-8")
     t0 = time.time()
@@ -77,10 +77,10 @@ def run_one(name, seed=42, lmdb=DEFAULT_LMDB, epochs=None, overrides=(), est_min
     alias = ck.with_name(f"parseq_{name}.ckpt")      # PARSeq infers the model class from the path, which must contain 'parseq'
     if not alias.exists():
         shutil.copy(ck, alias)
-    res = evaluate_model(load_model(alias, dev), name, run_dir / "eval", dev)
+    res = evaluate_model(load_model(alias, dev), name, run_dir / "eval", dev, resize_mode=resize_mode)
     done = {"name": name, "seed": seed, "epochs": epochs or cfg["train"]["max_epochs"], "overrides": list(overrides), "lmdb": str(lmdb),
             "steps": steps, "wall_minutes": round(wall / 60, 1), "checkpoint": str(ck.relative_to(ROOT)), "git_commit": git_commit(),
-            "note": note, "metrics": res}
+            "note": note, "resize_mode": resize_mode, "metrics": res}
     (run_dir / "done.json").write_text(json.dumps(done, indent=1, default=float), encoding="utf-8")
     log(f"DONE {name}: {steps} steps in {wall / 60:.1f} min")
     return done
@@ -93,6 +93,7 @@ def parse(argv):
     ap.add_argument("--lmdb", default=str(DEFAULT_LMDB))
     ap.add_argument("--epochs", type=int, default=None)
     ap.add_argument("--note", default="")
+    ap.add_argument("--resize-mode", default="stretch", choices=["stretch", "pad"])
     ap.add_argument("--queue", default=None)
     ap.add_argument("overrides", nargs="*")
     return ap.parse_args(argv)
@@ -104,6 +105,6 @@ if __name__ == "__main__":
         for line in Path(a.queue).read_text().splitlines():
             if line.strip() and not line.startswith("#"):
                 q = parse(shlex.split(line))
-                run_one(q.name, q.seed, q.lmdb, q.epochs, q.overrides, note=q.note)
+                run_one(q.name, q.seed, q.lmdb, q.epochs, q.overrides, note=q.note, resize_mode=q.resize_mode)
     else:
-        run_one(a.name, a.seed, a.lmdb, a.epochs, a.overrides, note=a.note)
+        run_one(a.name, a.seed, a.lmdb, a.epochs, a.overrides, note=a.note, resize_mode=a.resize_mode)

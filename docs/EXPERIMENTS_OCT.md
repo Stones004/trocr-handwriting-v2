@@ -248,6 +248,28 @@ Transcription of the pasted log into the file was done by hand; 226/226 crops ma
 
 Caveats: 226 crops, one reviewer, few writers; Chandra's cost, prompt and settings were not controlled (API via Colab), and the normalisation choices above favour Chandra; the PARSeq model is the user's pipeline model whose weights are unknown to me (it scores 185 vs 181 for master_v3 here).
 
+## Extra experiment: padding instead of stretching (user-approved, outside the original grid)
+
+`+data.resize_mode=pad` (aspect-preserving resize to fit 32x128, padding right and bottom), baseline recipe and data otherwise identical, seeds 42/43/44; evaluated with the same padded resize
+(`run_queue.py --resize-mode pad`; `eval_suite.evaluate_model(resize_mode=...)`). Wall time 25-39 min per run (the GPU was shared for part of the time).
+
+| (mean +- std, 3 seeds) | real test % | words % | coverage@99 % | confident errors | ECE | NLL |
+|---|---|---|---|---|---|---|
+| stretch baseline | 94.6 +- 0.8 | 40.1 +- 2.5 | 49.5 +- 9.5 | 6.0 +- 2.6 | 0.034 | 0.144 |
+| **pad** | 94.1 +- 0.3 | **12.6 +- 1.7** | 42.1 +- 1.9 | 6.7 +- 0.6 | 0.031 | 0.185 |
+
+On the user's 226 reviewed crops (`outputs/exp_oct/roi_check/roi_pad.py`):
+
+| | all 226 | document crops (142) | screenshots (84) |
+|---|---|---|---|
+| stretch baseline (s42/43/44: 183/184/181) | **80.8 +- 0.7%** | 87.3% | 69.8% |
+| pad (s42/43/44: 170/171/166) | **74.8%** (166-171) | 81.7% (115-118) | 63.1% (51-56) |
+
+**Decision: padding is worse; not adopted.** Real test is within noise (-0.5), but words collapse (40.1 -> 12.6) and the user's crops lose about 6 points on both documents and screenshots, far outside the 0.7 seed spread.
+It does not fix the screenshot leading-digit problem (63% vs 70%). Likely cause: the user's crops are roughly square (median 101x104 px documents, 172x100 screenshots) so padding gives a digit only about 32x32 pixels of the 128-wide canvas
+(about 4x less horizontal detail than stretching), and the wide word crops shrink the most. Not tested: a larger canvas (e.g. 64x256), which needs different position embeddings and a separate run.
+It also corrects an earlier guess: screenshots are *closer* to 4:1 than the document crops (aspect 1.8 vs 1.0), so aspect distortion does not explain why they are the weak set.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -269,6 +291,9 @@ Every run: config, seed, steps, wall time, checkpoint, git commit (from each run
 | ls010_s42 | 42 | 6570 | 20.0 | 93.9% | 18.7% | 3.4% | `outputs\exp_oct\ls010_s42\checkpoints\final.ckpt` | ead9580+uncommitted |
 | ls005_s43 | 43 | 6570 | 20.0 | 94.5% | 26.0% | 4.2% | `outputs\exp_oct\ls005_s43\checkpoints\final.ckpt` | ead9580+uncommitted |
 | ls005_s44 | 44 | 6570 | 20.0 | 94.5% | 27.3% | 8.7% | `outputs\exp_oct\ls005_s44\checkpoints\final.ckpt` | ead9580+uncommitted |
+| pad_s42 (resize pad) | 42 | 6570 | 25.0 | 93.9% | 11.0% | 40.1% | `outputs\exp_oct\pad_s42\checkpoints\final.ckpt` | 3ffeeca+uncommitted |
+| pad_s43 (resize pad) | 43 | 6570 | 20.0 | 93.9% | 14.3% | 43.8% | `outputs\exp_oct\pad_s43\checkpoints\final.ckpt` | 3ffeeca+uncommitted |
+| pad_s44 (resize pad) | 44 | 6570 | 39.0 | 94.5% | 12.3% | 42.5% | `outputs\exp_oct\pad_s44\checkpoints\final.ckpt` | 3ffeeca+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
 

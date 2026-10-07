@@ -156,14 +156,14 @@ def _acc_block(tab):
             "cer": edits / max(sum(max(len(t), 1) for t in tab["label"]), 1)}
 
 
-def evaluate_model(model, name, out_dir, device=None, with_val=True, with_words=True, temperature=None, copy_crops=True):
+def evaluate_model(model, name, out_dir, device=None, with_val=True, with_words=True, temperature=None, copy_crops=True, resize_mode="stretch"):
     """Full suite on an already-loaded model. If `temperature` is given, test/val confidences are recomputed from logits/T
     (T must have been fitted on val). Writes per-crop CSVs, logits and metrics.json into out_dir; returns the metrics dict."""
     device = device or get_device()
     out_dir = Path(out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     model = model.eval().to(device)
-    tf = make_transform(model)
+    tf = make_transform(model, resize_mode)      # must equal the data.resize_mode the model was trained with
     sets = {"test": pd.read_csv(TEST_CSV, keep_default_na=False, dtype=str)}
     if with_val:
         sets["val"] = pd.read_csv(VAL_CSV, keep_default_na=False, dtype=str)
