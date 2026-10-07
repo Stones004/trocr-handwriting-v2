@@ -297,6 +297,25 @@ Ink = Otsu threshold; stroke width = 2 x ink area / ink perimeter; "after stretc
 
 **Not done / suggestions (outside the planned grid):** (a) thicken or darken the synthetic strokes and add edge clipping so they match real crops; (b) augment real/synthetic training crops with thin, wide, margined screenshot-style crops; (c) test whether darkening or dilating the screenshots before inference improves them (a no-training test on the 84 crops).
 
+## CRNN + CTC vs PARSeq (user-requested, outside the original grid)
+
+strhub CRNN (7-layer CNN -> 2-layer BiLSTM, hidden 256, CTC over the 94 characters + blank, 8.4M parameters), initialised from the pretrained `crnn-679d0e31.pt` (downloaded once from the PARSeq GitHub release, cached in `D:/cache/torch`;
+training itself needs no internet). Same data (13,996 rows), 15 epochs, batch 32, RandAugment 9, 32x128 stretch, seeds 42/43/44; learning rate = CRNN's own default 5.1e-4 (**not tuned**; PARSeq's recipe lr 1.5e-3 was tuned for PARSeq).
+Code: `src/exp_oct/crnn_support.py`; `train.py` needed a guard for models without a ViT `.encoder` (in `patches/exp_oct.patch`). CTC confidence = minimum over decoded characters of the best frame probability inside that character's run (blanks ignored): not the same definition as PARSeq's,
+so ECE/coverage are only roughly comparable; the NLL column is per-character CTC NLL, **not comparable** with PARSeq's token NLL; temperature scaling not applied to CTC.
+
+| (mean +- std, 3 seeds) | real test % | words % | coverage@99 % | confident errors | ECE | train time | params | CPU speed (4 threads) |
+|---|---|---|---|---|---|---|---|---|
+| PARSeq stretch baseline | **94.6 +- 0.8** | **40.1 +- 2.5** | 49.5 +- 9.5 | 6.0 +- 2.6 | 0.034 | ~18 min | 23.8M | 58 ms/crop |
+| CRNN + CTC | 88.1 +- 0.3 | 23.8 +- 0.5 | 39.5 +- 1.6 | 6.7 +- 1.2 | 0.042 | **~9 min** | **8.4M** | **13 ms/crop** |
+
+On the user's 226 reviewed crops (`roi_pad.py`): CRNN **68.9%** (160/153/154 correct) vs PARSeq baseline 80.8 +- 0.7; document crops 77.3% vs 87.3%; screenshots 54.8% vs 69.8%.
+
+**Reading:** CRNN is clearly less accurate: -6.5 points on the 379-crop test, about -12 points on the user's crops, and worse on words and screenshots; seed-to-seed spread is small (0.3), so the gap is not noise.
+Its confidence is usable (precision of accepted crops 99.6%, similar confident-error count), and it is 2x smaller, about 4.5x faster on CPU and trains in half the time.
+Caveats: untuned lr, no replay words, a different confidence definition, one architecture setting (hidden 256). The gap could narrow with tuning but a 6-12 point gap is unlikely to close completely; the speed would only matter if CPU latency is a real constraint.
+**Decision: PARSeq stays the model; CRNN is not adopted for accuracy.** Worth considering only as a fast first-pass or a second opinion (its errors differ from PARSeq's), which was not tested.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -321,6 +340,9 @@ Every run: config, seed, steps, wall time, checkpoint, git commit (from each run
 | pad_s42 (resize pad) | 42 | 6570 | 25.0 | 93.9% | 11.0% | 40.1% | `outputs\exp_oct\pad_s42\checkpoints\final.ckpt` | 3ffeeca+uncommitted |
 | pad_s43 (resize pad) | 43 | 6570 | 20.0 | 93.9% | 14.3% | 43.8% | `outputs\exp_oct\pad_s43\checkpoints\final.ckpt` | 3ffeeca+uncommitted |
 | pad_s44 (resize pad) | 44 | 6570 | 39.0 | 94.5% | 12.3% | 42.5% | `outputs\exp_oct\pad_s44\checkpoints\final.ckpt` | 3ffeeca+uncommitted |
+| crnn_s42 (CRNN+CTC) | 42 | 6570 | 9.0 | 88.4% | 24.3% | 41.2% | `outputs\exp_oct\crnn_s42\checkpoints\final.ckpt` | 3e86353+uncommitted |
+| crnn_s43 (CRNN+CTC) | 43 | 6570 | 9.0 | 88.1% | 23.3% | 39.3% | `outputs\exp_oct\crnn_s43\checkpoints\final.ckpt` | 3e86353+uncommitted |
+| crnn_s44 (CRNN+CTC) | 44 | 6570 | 8.0 | 87.9% | 23.7% | 38.0% | `outputs\exp_oct\crnn_s44\checkpoints\final.ckpt` | 3e86353+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
 
