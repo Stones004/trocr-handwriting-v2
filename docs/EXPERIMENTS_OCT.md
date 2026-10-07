@@ -270,6 +270,33 @@ It does not fix the screenshot leading-digit problem (63% vs 70%). Likely cause:
 (about 4x less horizontal detail than stretching), and the wide word crops shrink the most. Not tested: a larger canvas (e.g. 64x256), which needs different position embeddings and a separate run.
 It also corrects an earlier guess: screenshots are *closer* to 4:1 than the document crops (aspect 1.8 vs 1.0), so aspect distortion does not explain why they are the weak set.
 
+## Pixel density analysis of all crops
+
+`src/exp_oct/analyze_density.py` (read-only). 19,191 crops: the master dataset (3,129 real train, 382 val, 378 test, 10 junk, 10,867 synthetic), 4,199 replay words, 226 ROI crops.
+Per-crop table `outputs/exp_oct/density/density_per_crop.csv`, group medians `summary_by_group.csv`, plot `density_histograms.png`, ROI crops joined to model correctness `roi_density_vs_accuracy.csv`.
+Ink = Otsu threshold; stroke width = 2 x ink area / ink perimeter; "after stretch" = scaled by the geometric mean of the x and y scale factors to 32x128.
+
+| group (median) | n | w x h | aspect | contrast | ink fraction | stroke px | stroke px after stretch | ink touches L / R / top / bottom % |
+|---|---|---|---|---|---|---|---|---|
+| real train | 3,129 | 79 x 89 | 0.86 | 155 | 0.146 | 5.1 | 3.8 | 8 / 32 / 25 / 27 |
+| real val | 382 | 82 x 91 | 0.85 | 148 | 0.141 | 5.2 | 3.6 | 5 / 24 / 21 / 20 |
+| real test | 378 | 74 x 84 | 0.88 | 166 | 0.144 | 5.3 | 4.2 | 9 / 22 / 18 / 19 |
+| **synthetic train** | 10,867 | 87 x 64 | 1.36 | **110** | **0.099** | **3.4** | **2.8** | 8 / 7 / 2 / 14 |
+| replay words | 4,199 | 95 x 64 | 1.48 | 102 | 0.081 | 2.5 | 2.2 | 16 / 13 / 2 / 13 |
+| ROI document crops | 142 | 101 x 104 | 0.98 | 161 | 0.171 | 5.5 | 3.5 | 14 / 39 / 25 / 28 |
+| **ROI screenshots** | 84 | 173 x 100 | 1.80 | 150 | **0.054** | **3.1** | **1.6** | **0 / 0 / 7 / 5** |
+
+**Findings**
+1. **Real crops and the user's document crops look alike** (same size, stroke width 5.1-5.5 px, ink fraction 0.15-0.17, contrast 150-165), so the document ROIs are in-domain.
+2. **Synthetic crops differ from real ones in four ways:** strokes are about 1.5x thinner (3.4 vs 5.1 px; 2.8 vs 3.8 after the stretch), contrast is much lower (110 vs 155), they are wider (aspect 1.36 vs 0.86), and
+   they are almost never cut by the crop edge (7%/2% touch right/top, against 32%/25% for real). Real crops are tight and often clipped; synthetic crops always sit inside a margin. Replay words are thinner and lower contrast still (2.5 px, contrast 102).
+   78% of the training rows are synthetic, so the model is trained mostly on thin, faint, well-margined ink.
+3. **The screenshots are out of domain, and not because the left edge is cut.** Ink touches the left border in 0 of 84 screenshots (real train: 8%). Their ink fraction is 0.054 (a third of real, 0.146), strokes are 3.1 px (real 5.1), and after the 32x128 stretch a stroke is only
+   1.6 px wide (real 3.8 px), because the crops are 100 px tall and are cut down 3x. So the leading-digit loss is more likely a thin, faint, large-crop domain gap than clipping. This refutes the earlier hypothesis that the left edge was being cut.
+4. **Within the ROI sets, density alone does not predict errors well.** Document crops with ink touching the left border score 85% against 91-92% without (20 crops); screenshots with ink fraction < 0.05 score 62-63% (pipeline, replay) against 68-71% overall; the differences are small and on small n, so no causal claim.
+
+**Not done / suggestions (outside the planned grid):** (a) thicken or darken the synthetic strokes and add edge clipping so they match real crops; (b) augment real/synthetic training crops with thin, wide, margined screenshot-style crops; (c) test whether darkening or dilating the screenshots before inference improves them (a no-training test on the 84 crops).
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
