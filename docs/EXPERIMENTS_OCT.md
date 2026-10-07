@@ -316,6 +316,32 @@ Its confidence is usable (precision of accepted crops 99.6%, similar confident-e
 Caveats: untuned lr, no replay words, a different confidence definition, one architecture setting (hidden 256). The gap could narrow with tuning but a 6-12 point gap is unlikely to close completely; the speed would only matter if CPU latency is a real constraint.
 **Decision: PARSeq stays the model; CRNN is not adopted for accuracy.** Worth considering only as a fast first-pass or a second opinion (its errors differ from PARSeq's), which was not tested.
 
+## Marked-NNa data: marks at every position (user request)
+
+**Motivation.** The master data drew NNa marks from only 9 templates (`NN)a`, `NN.a`, `NNa)`, `NNa.`, `NN(a)`, `(NN)a`, `(NNa)`, `NN(a`, `(NNa`): never between the two digits and no `[ ]` inside the label.
+**New data** (`src/exp_oct/build_marks.py`): 6,000 synthetic NNa crops (same fonts, glyph banks and page augmentation as `src/master/render.py`) with the marks `. ( ) [ ]` (no comma, as requested) in any of four gaps (before the number, between the two digits,
+between digits and letter, after the letter): 35% single mark, 30% bracket pair wrapping a span (10% mismatched, 30% also a dot), 25% two marks, 10% three marks; 2,400 crops have a mark between the digits, 3,219 contain a square bracket.
+Labels remain characters only (`12a`). Plus 300 held-out evaluation crops (different seed). Contact sheet: `outputs/exp_oct/marks_nna/contact_sheet.png`. Training set = replay-30% set (13,996 rows) + the 6,000 new rows = 19,996 rows,
+625 steps/epoch, **9,375 steps per run (replay-30 control: 6,570)**; seeds 42/43/44, ~27 min each. Val/test unchanged.
+
+| (mean +- std, 3 seeds) | real test % | words % | coverage@99 % | confident errors | ECE | your 226 crops | your doc crops | your screenshots | **held-out marked NNa (300, synthetic)** |
+|---|---|---|---|---|---|---|---|---|---|
+| stretch baseline | 94.6 +- 0.8 | 40.1 +- 2.5 | 49.5 +- 9.5 | 6.0 | 0.034 | 80.8 +- 0.7 | 87.3% | 69.8% | 92.4% |
+| replay 30% (control) | 94.5 +- 0.7 | 89.4 +- 0.5 | 50.9 +- 10.7 | 9.0 | 0.036 | **83.3 +- 0.3** | **90.8%** | 70.6% | 87.7% |
+| replay 30% + 6k marked NNa | 94.2 +- 0.7 | 89.4 +- 0.4 | 57.1 +- 6.6 | 5.3 | 0.031 | 81.4% (185/181/186) | 87.8% | 70.6% | **96.8%** (97.0/96.7/96.7) |
+
+Held-out marked set by gap (mean of 3 seeds): the weakest case before, a mark between the two digits, rises from 79-84% (replay 30%) to about 95-96%; all five mark types are 93-100%; three-mark crops 94-100% (replay 30%: 74-82%).
+`outputs/exp_oct/eval_marks` output per run: `<run>/marks_eval_preds.csv`.
+
+**Reading**
+- The model **learns the new formats** (87.7% -> 96.8% on held-out marked NNa) and replay's loss on this format (87.7 vs baseline 92.4, replay removed 39% of the synthetic rows) is more than repaid.
+- Plain numbers and words are unchanged within noise (real test 94.2 vs 94.5, words 89.4 both); coverage and confident errors are slightly better (57.1 vs 50.9, 5.3 vs 9.0) but inside the seed noise.
+- **On the user's own 226 crops it is not better: 81.4% vs 83.3% for replay 30%, with the whole difference on document crops (87.8 vs 90.8)**; screenshots are the same (70.6). Three seeds (181-186 vs 188-189 correct) so this is probably real but small (4-5 crops). The user's crops contain few marked NNa labels, so the new data could not help there, and
+  adding 6,000 synthetic rows may shift the model away from real documents. Not investigated further.
+- Caveats: the held-out marked set is **synthetic from the same generator**, so it proves the model learned the format but not that it reads students' real marked NNa; the compute differs (9,375 vs 6,570 steps); real marked NNa crops from students are the missing evaluation.
+
+**Decision:** keep both. Use **replay 30% (no marks)** if the documents resemble the user's 226 crops; use **replay 30% + marked NNa** if real marked NNa labels (`1.2a`, `(12)a`, `[1]2a`, ...) are common in production. The choice needs real examples of marked NNa labels to settle.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -343,6 +369,9 @@ Every run: config, seed, steps, wall time, checkpoint, git commit (from each run
 | crnn_s42 (CRNN+CTC) | 42 | 6570 | 9.0 | 88.4% | 24.3% | 41.2% | `outputs\exp_oct\crnn_s42\checkpoints\final.ckpt` | 3e86353+uncommitted |
 | crnn_s43 (CRNN+CTC) | 43 | 6570 | 9.0 | 88.1% | 23.3% | 39.3% | `outputs\exp_oct\crnn_s43\checkpoints\final.ckpt` | 3e86353+uncommitted |
 | crnn_s44 (CRNN+CTC) | 44 | 6570 | 8.0 | 87.9% | 23.7% | 38.0% | `outputs\exp_oct\crnn_s44\checkpoints\final.ckpt` | 3e86353+uncommitted |
+| rm6k_s42 (replay30 + 6k marked NNa) | 42 | 9375 | 27.0 | 94.7% | 89.0% | 62.3% | `outputs\exp_oct\rm6k_s42\checkpoints\final.ckpt` | 5f227df+uncommitted |
+| rm6k_s43 (replay30 + 6k marked NNa) | 43 | 9375 | 27.0 | 93.4% | 89.7% | 59.4% | `outputs\exp_oct\rm6k_s43\checkpoints\final.ckpt` | 5f227df+uncommitted |
+| rm6k_s44 (replay30 + 6k marked NNa) | 44 | 9375 | 28.0 | 94.5% | 89.7% | 49.6% | `outputs\exp_oct\rm6k_s44\checkpoints\final.ckpt` | 5f227df+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
 
