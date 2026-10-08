@@ -381,6 +381,27 @@ Findings:
 - The prior-shift worry is only partly resolved. On the user's 226 crops, 1-digit (97.8 -> 92.0, about 3 crops) and 1-letter (93.6 -> 89.7, about 2 crops) are still below replay 30%. On the real test they are within noise (97.5 vs 96.8; 80.5 vs 81.6). Errors that replay 30% did not make: `3 -> 93`, `6 -> 26`, `9 -> 99`, `2 -> 12`, `3 -> Aus`, `b -> 5`, `C -> 5`. They look like extra or substituted characters, not NNa-ification as such. Sample sizes are small (46 and 52 crops), so this is suggestive, not proven. The overall 226 score (82.0 vs 83.3) is inside the noise band.
 - Decision rule: rm2 does not beat replay 30% by more than 1 point on the real test (94.6 vs 94.5), so it is not "better" under the rule. It improves marked-crop robustness a lot and loses nothing measurable on real test. Marked real crops are the missing evidence, as before.
 
+## Screenshot stroke test, Step A (no training, user-approved)
+
+Question: are screenshots weak (about 70%) because their strokes are thin and faint? Test: before inference, darken and thicken the strokes of the 226 ROI crops (84 screenshots, 142 documents) and re-score replay 30% and rm2, 3 seeds each (`outputs/exp_oct/roi_check/stroke_test.py`, per-crop results in `stroke_test.csv`). Variants: s1 = contrast stretch (2-98 percentile) + gamma 0.7; s2/s3/s4 = s1 + stroke thickening with a kernel of 3 / 6 / 9% of the crop height.
+
+| Model, variant | Screenshots (84) | Documents (142) |
+|---|---|---|
+| replay 30%, none | 70.6 +- 1.4 | 90.8 +- 0.7 |
+| replay 30%, s1 contrast | 72.2 +- 1.8 | 90.1 |
+| replay 30%, s2 thick 3% | 67.5 | 89.7 |
+| replay 30%, s3 thick 6% | 57.1 | 82.9 |
+| replay 30%, s4 thick 9% | 45.6 | 70.9 |
+| rm2, none | 73.8 +- 4.1 | 86.9 |
+| rm2, s1 contrast | 73.8 | 85.9 |
+| rm2, s2 thick 3% | 69.0 | 87.6 |
+| rm2, s3 thick 6% | 60.7 | 83.1 |
+| rm2, s4 thick 9% | 48.4 | 70.2 |
+
+Result: negative. Thickening makes screenshots worse at every strength (70.6 -> 67.5 -> 57.1 -> 45.6 for replay 30%), and the damage is largest on 2-digit labels. Contrast alone gives +1.6 points for replay 30% (about 1.3 crops of 84) and 0.0 for rm2, which is inside the noise (seed spread 1.4-4.1; 84 crops; the rule needs about 4 crops). Documents are unchanged or worse. Screenshots contain only 2-digit, NNa, Na and other labels (no 1-digit or letter crops among the 84).
+
+Conclusion: stroke thinness alone does not explain the screenshot weakness, so Step B (screenshot-style synthetic strokes) is not justified by this test. Other candidate causes, untested: low resolution/blur, the different background and padding, no left-border contact, and too few real screenshots in training. Caveat: thickening was a simple morphological filter at native resolution, not a rendering that matches how screenshot strokes look.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -411,9 +432,12 @@ Every run: config, seed, steps, wall time, checkpoint, git commit (from each run
 | rm6k_s42 (replay30 + 6k marked NNa) | 42 | 9375 | 27.0 | 94.7% | 89.0% | 62.3% | `outputs\exp_oct\rm6k_s42\checkpoints\final.ckpt` | 5f227df+uncommitted |
 | rm6k_s43 (replay30 + 6k marked NNa) | 43 | 9375 | 27.0 | 93.4% | 89.7% | 59.4% | `outputs\exp_oct\rm6k_s43\checkpoints\final.ckpt` | 5f227df+uncommitted |
 | rm6k_s44 (replay30 + 6k marked NNa) | 44 | 9375 | 28.0 | 94.5% | 89.7% | 49.6% | `outputs\exp_oct\rm6k_s44\checkpoints\final.ckpt` | 5f227df+uncommitted |
-| rm2_s42 (replay30 + 4k marked, all formats) | 42 | 8445 | 23.0 | 94.5% | 90.3% | 58.8% | `outputs\exp_octm2_s42\checkpointsinal.ckpt` | c5dd623+uncommitted |
-| rm2_s43 (replay30 + 4k marked, all formats) | 43 | 8445 | 23.0 | 93.9% | 89.0% | 57.5% | `outputs\exp_octm2_s43\checkpointsinal.ckpt` | c5dd623+uncommitted |
-| rm2_s44 (replay30 + 4k marked, all formats) | 44 | 8445 | 23.0 | 95.3% | 88.3% | 59.9% | `outputs\exp_octm2_s44\checkpointsinal.ckpt` | c5dd623+uncommitted |
+| rm2_s42 (replay30 + 4k marked, all formats) | 42 | 8445 | 23.0 | 94.5% | 90.3% | 58.8% | `outputs\exp_oct
+m2_s42\checkpointsinal.ckpt` | c5dd623+uncommitted |
+| rm2_s43 (replay30 + 4k marked, all formats) | 43 | 8445 | 23.0 | 93.9% | 89.0% | 57.5% | `outputs\exp_oct
+m2_s43\checkpointsinal.ckpt` | c5dd623+uncommitted |
+| rm2_s44 (replay30 + 4k marked, all formats) | 44 | 8445 | 23.0 | 95.3% | 88.3% | 59.9% | `outputs\exp_oct
+m2_s44\checkpointsinal.ckpt` | c5dd623+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
 
