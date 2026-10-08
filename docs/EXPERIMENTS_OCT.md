@@ -342,6 +342,45 @@ Held-out marked set by gap (mean of 3 seeds): the weakest case before, a mark be
 
 **Decision:** keep both. Use **replay 30% (no marks)** if the documents resemble the user's 226 crops; use **replay 30% + marked NNa** if real marked NNa labels (`1.2a`, `(12)a`, `[1]2a`, ...) are common in production. The choice needs real examples of marked NNa labels to settle.
 
+## Marked data on every format of the NNa family (user request, outside the original grid)
+
+Why: the 6k marked-NNa set made NNa 46% of the training rows and plain 1-digit/letter crops on the user's 226 got worse (1 digit 97.8 -> 94.2). New set `replay30_marks2`: replay-30% rows + 4,000 marked crops (`src/exp_oct/build_marks2.py`): NNa 1,600, 1 letter 560, 2 letters 560 (Roman only: ii iv vi ix, both cases), 1 digit 480, 2 digits 480, Na 320. Marks `. ( ) [ ]` at every gap, labels = characters only. NNa is now about 27% of the training set. 17,996 rows, 8,445 steps per run, 3 seeds (42-44). Held-out marked set: 100 crops per format, different seed (`outputs/exp_oct/marks2/marks2_eval.csv`). Scoring script: `outputs/exp_oct/roi_check/score_rm2.py`, all numbers are the mean over 3 seeds.
+
+Real test (379), words, coverage: rm2 94.6 (94.5, 93.9, 95.3), words 89.2, coverage@99 58.7, confident errors 7.7: no change versus replay 30% (94.5) beyond noise.
+
+Held-out marked crops (synthetic, same generator as the training marks):
+
+| Format | n | replay 30% | +6k marked NNa | +4k all formats |
+|---|---|---|---|---|
+| NNa | 100 | 90.7 | 98.7 | 97.0 |
+| Na | 100 | 73.3 | 80.3 | 93.7 |
+| 1 digit | 100 | 86.0 | 90.3 | 94.7 |
+| 2 digits | 100 | 83.3 | 93.3 | 96.0 |
+| 1 letter | 100 | 67.0 | 78.3 | 89.7 |
+| 2 letters (Roman) | 100 | 57.3 | 74.0 | 94.3 |
+| all | 600 | 76.3 | 85.8 | 94.2 |
+| old marked-NNa set | 300 | 87.7 | 96.8 | 95.2 |
+
+The user's 226 reviewed crops (n per format varies; small groups are noisy):
+
+| Format | n | replay 30% | +6k marked NNa | +4k all formats |
+|---|---|---|---|---|
+| 1 digit | 46 | 97.8 | 94.2 | 92.0 |
+| 1 letter | 52 | 93.6 | 92.3 | 89.7 |
+| 2 digits | 30 | 67.8 | 63.3 | 71.1 |
+| NNa | 55 | 77.6 | 77.0 | 78.2 |
+| Na | 31 | 77.4 | 74.2 | 77.4 |
+| 2 letters (Roman) | 5 | 93.3 | 100 | 100 |
+| other | 7 | 42.9 | 47.6 | 42.9 |
+| all | 226 | 83.3 | 81.4 | 82.0 |
+
+Real test by format (379): 1 digit 97.5 / 97.0 / 96.8, 2 digits 95.2 / 93.7 / 100 (n=21), 1 letter 80.5 / 80.5 / 81.6 (n=29), 2 letters 79.7 / 81.2 / 82.6 (n=23), same column order.
+
+Findings:
+- The mix fixed what it was built for: marked crops of every format are now read at 90-97% (all 600: 94.2% vs 76.3% for replay 30% and 85.8% for the NNa-only set). NNa kept 97.0% (old marked set 95.2% vs 96.8%, about 1 crop in 100, noise).
+- The prior-shift worry is only partly resolved. On the user's 226 crops, 1-digit (97.8 -> 92.0, about 3 crops) and 1-letter (93.6 -> 89.7, about 2 crops) are still below replay 30%. On the real test they are within noise (97.5 vs 96.8; 80.5 vs 81.6). Errors that replay 30% did not make: `3 -> 93`, `6 -> 26`, `9 -> 99`, `2 -> 12`, `3 -> Aus`, `b -> 5`, `C -> 5`. They look like extra or substituted characters, not NNa-ification as such. Sample sizes are small (46 and 52 crops), so this is suggestive, not proven. The overall 226 score (82.0 vs 83.3) is inside the noise band.
+- Decision rule: rm2 does not beat replay 30% by more than 1 point on the real test (94.6 vs 94.5), so it is not "better" under the rule. It improves marked-crop robustness a lot and loses nothing measurable on real test. Marked real crops are the missing evidence, as before.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -372,6 +411,9 @@ Every run: config, seed, steps, wall time, checkpoint, git commit (from each run
 | rm6k_s42 (replay30 + 6k marked NNa) | 42 | 9375 | 27.0 | 94.7% | 89.0% | 62.3% | `outputs\exp_oct\rm6k_s42\checkpoints\final.ckpt` | 5f227df+uncommitted |
 | rm6k_s43 (replay30 + 6k marked NNa) | 43 | 9375 | 27.0 | 93.4% | 89.7% | 59.4% | `outputs\exp_oct\rm6k_s43\checkpoints\final.ckpt` | 5f227df+uncommitted |
 | rm6k_s44 (replay30 + 6k marked NNa) | 44 | 9375 | 28.0 | 94.5% | 89.7% | 49.6% | `outputs\exp_oct\rm6k_s44\checkpoints\final.ckpt` | 5f227df+uncommitted |
+| rm2_s42 (replay30 + 4k marked, all formats) | 42 | 8445 | 23.0 | 94.5% | 90.3% | 58.8% | `outputs\exp_octm2_s42\checkpointsinal.ckpt` | c5dd623+uncommitted |
+| rm2_s43 (replay30 + 4k marked, all formats) | 43 | 8445 | 23.0 | 93.9% | 89.0% | 57.5% | `outputs\exp_octm2_s43\checkpointsinal.ckpt` | c5dd623+uncommitted |
+| rm2_s44 (replay30 + 4k marked, all formats) | 44 | 8445 | 23.0 | 95.3% | 88.3% | 59.9% | `outputs\exp_octm2_s44\checkpointsinal.ckpt` | c5dd623+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
 
