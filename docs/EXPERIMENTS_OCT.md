@@ -410,7 +410,26 @@ Verified: 6.39M parameters (about 6.4M as expected), `load_state_dict` matched a
 
 Checkpoint safety: the pickle references only OrderedDict, tensor rebuild helpers and Lightning's `ModelCheckpoint` class (checked with `pickletools`, nothing executed). `torch.load(weights_only=True)` fails on that one class, so the script allow-lists it instead of falling back to unsafe loading.
 
-First sanity check on the 4 non-numeric crops in the user's 226 (`or`, `Add`, `Add`, `091`): it read `a`, `ladi`, `sadi`, `oar`, so it does not read these crops. 4 crops is not an evaluation; scoring on the 226 crops, the 379-crop test and the 300 words has not been run yet.
+First sanity check on the 4 non-numeric crops in the user's 226 (`or`, `Add`, `Add`, `091`): it read `a`, `ladi`, `sadi`, `oar`, so it does not read these crops. 4 crops is not an evaluation; the full scoring follows.
+
+### LoGo-HTR zero-shot scores (`src/exp_oct/logo_htr_score.py`, beam 10, case-sensitive exact match; `outputs/exp_oct/logohtr/`)
+
+| Set | Raw | Marks stripped | For comparison |
+|---|---|---|---|
+| User's 226 reviewed crops | 13.7% | 39.8% | PARSeq replay 30%: 81.9-83.3%; Chandra 56.6%; Mistral 59.7% (lenient) |
+| of which documents (142) | 12.0% | 45.1% | PARSeq 90.8% |
+| of which screenshots (84) | 16.7% | 31.0% | PARSeq 70.6% |
+| Real test (379) | 30.9% | 64.6% | PARSeq 94.5% |
+| Words (300, synthetic) | 18.3% | 18.3% | PARSeq replay 30% 89.4% |
+
+Words by kind: common 36.0%, Capitalized 28.0%, random strings 6.7%, mixed case 2.7%. ROI by format (marks stripped): 1 letter 75.0%, NNa 40.0%, Na 38.7%, 1 digit 28.3%, 2 digits 3.3%.
+
+Findings:
+- It does not read the project's labels. Roughly half of its outputs on the number crops contain a mark (168 of 379 on test, 119 of 226 on ROI), and stripping them still leaves 39.8% / 64.6%.
+- The failures look like a language prior, not a reading error: single digits come out as common words (`8 -> of`, `6 -> of`, `5 -> sy`, `9 -> a`), digits get extra digits (`1 -> 17`, `3 -> 37`, `4 -> 47`), and random strings become real words (`Vfdmwi -> veamm`, `UnpyjB -> more`). It was trained on running text in scientific documents.
+- It also loses on the synthetic words (18.3%), including when the word is a real one with a capital (`Poverty -> poverty`, case is part of the label), and on our style of rendering. Zero-shot is not a fair test of its ability on its own domain; it only shows it cannot be dropped in for question numbers.
+- Decision: not a candidate. It would need training on this project's labels, which is a different project, and its one potential strength (real handwritten words) is not visible here: on the 4 real words in the ROI set it read none.
+
 
 ## Run ledger
 
