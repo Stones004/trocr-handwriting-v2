@@ -2,6 +2,7 @@
 .venv/
 venv/
 venv_parseq/
+venv_logohtr/
 
 # Python
 __pycache__/
