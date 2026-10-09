@@ -462,6 +462,25 @@ Findings:
 - Likely reasons (untested): domain gap (coloured photos of digits written in running text vs your grey exam-margin crops), label noise from automatic annotation, and a different digit style from the question-number writing. Adding 3,056 crops of that kind appears to pull the model slightly away from the target.
 - Decision: do not adopt. This closes the "more data" direction that does not come from the target documents: replay words, synthetic marks, and real out-of-domain digits have each left the real test at 93-95%.
 
+## Error review: label problems and unreadable crops (user request, nothing retrained)
+
+Which crops do the models get wrong? Hard set = real-test crops wrong in at least 4 of 12 models (baseline, replay 30%, +6k marked NNa, +4k marks all formats; 3 seeds each): 28 crops; and crops of the user's 226 wrong in at least 4 of 6 models (baseline and replay 30%, 3 seeds): 34 crops. Contact sheets `outputs/exp_oct/review/test_{1,2}.png`, `roi_{1,2}.png` (sheet numbers = `sheet_no`), table `review_queue.csv` (filename, label, most common prediction, number of models wrong, provisional category). The categories are one reader's (Claude's) reading of the images, not ground truth, and the user was asked to confirm or correct them. No label was changed.
+
+| Category | Real test (28) | Your 226 (34) |
+|---|---|---|
+| Ambiguous (ii/iii, I/1, c/C, VI/VII, 11/II) | 10 | 8 |
+| Label wrong or suspect | 4 | 5 |
+| Unreadable or cut off | 7 | 4 |
+| Not a question number (the words `or`, `Add`, `Add`) | 0 | 3 |
+| Model error (legible, models still wrong) | 7 | 14 |
+
+Label problems found (do not relabel; for the user to check): real test `III.` (the label contains a dot; labels are characters only, so every model that predicts `III` is scored wrong), `2` that looks like `1`, `7` that looks like `2)`, `II` that looks like `V`; your 226: `15` that reads `75`, `7c` that reads `78`, `091` that reads `9.1`, `16` that reads `1b`, `10c` that reads `(0.c)`. Case ambiguity (`c`/`C`) accounts for several misses in both sets.
+
+Findings:
+- At least 11 of the 28 hard real-test crops (4 label, 7 unreadable) cannot be fixed by modelling, and 10 more are ambiguous between two readings the writer may not distinguish. Only about 7 of 28 are plain model errors. With about 20 misses on the 379 crops, a rough ceiling is 97-98%, so the 94.5% plateau has little room above it that more training data could reach.
+- On your 226 crops the model errors are concentrated on interior marks: `1)9 -> 1`, `15.e) -> 5e`, `1.a) -> a`, `4)5 -> 5`, and a dropped leading digit on faint screenshots (`81 -> 1`). The marked-data models fix some of these (rm2 reads `4)5` and `81` correctly in some seeds; `15.e)` and `1.a)` stay wrong in all seeds), so the marked data helps but does not close the gap.
+- The `Add` and `or` crops are words, outside the question-number task.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
