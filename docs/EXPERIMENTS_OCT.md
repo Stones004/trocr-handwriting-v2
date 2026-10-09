@@ -431,6 +431,37 @@ Findings:
 - Decision: not a candidate. It would need training on this project's labels, which is a different project, and its one potential strength (real handwritten words) is not visible here: on the 4 real words in the ROI set it read none.
 
 
+## Real SSL-HWD crops added to PARSeq training (user request, outside the original grid)
+
+Question: do real handwritten digits and letters from another dataset improve PARSeq? Data: SSL-HWD-Words (Labeled), https://huggingface.co/datasets/Shree10/SSL-HWD-Words (Apache-2.0 per the dataset card; labels auto-annotated by Amazon Textract at >=99% confidence, then reportedly checked by language experts, not verified here). Only the 835 label CSVs were read (zip central directory + range requests, `src/exp_oct/ssl_hwd_scan.py`, no images): 2,089,929 labels. Counts by project format (plain labels): 1 letter 109,317 (66% of them the words a/A/I), 1 digit 45,056 (35% are 2 or 3), 2 digits 42,356 (mostly counts and fractions), Na 1,361, Roman pairs 503, NNa only 116. Marked forms such as `(2)`, `3)`, `(a)`, `a)`, `(i)` exist in the thousands.
+
+Pilot set (`src/exp_oct/ssl_hwd_sample.py`, seed 20261109): labels of the form `[ ( [ ]  CORE  [ ) ] . ]` only (no fractions, decimals, percentages), plain a/A/I excluded, per-label caps, at most 15 crops per writer. 3,062 sampled, 3,056 kept after dedupe/size filter: 826 one-digit, 982 two-digit, 881 one-letter, 154 Roman pairs, 213 digit+letter; 607 carry marks; 481 writers; median crop 56x62 px, colour photos. Training label = characters only. Training set `replay30_ssl3k` = replay 30% + these 3,056 rows (17,052 rows, 7,995 steps per run). 3 seeds (42-44), same recipe. Crops: `outputs/exp_oct/ssl_hwd/crops/`, contact sheet `contact_sheet.png`.
+
+| 3 seeds | Real test (379) | Words | Coverage@99 | Confident errors | Your 226 crops |
+|---|---|---|---|---|---|
+| Replay 30% | 94.5 +- 0.7 | 89.4 | 50.9 | 9.0 | 83.3 |
+| + 4k marks, all formats (rm2) | 94.6 | 89.2 | 58.7 | 7.7 | 82.0 |
+| + 3,056 real SSL-HWD crops (ss3k) | 93.4 (92.9, 93.7, 93.7) | 88.5 (88.3, 88.3, 89.0) | 44.2 (39.6, 48.3, 44.6) | 9.0 | 82.9 |
+
+By format (mean of 3 seeds):
+
+| Format | Real test: replay 30% / ss3k | Your 226 crops: replay 30% / ss3k |
+|---|---|---|
+| 1 digit | 97.5 / 96.2 (n=293) | 97.8 / 92.0 (n=46) |
+| 1 letter | 80.5 / 78.2 (n=29) | 93.6 / 93.6 (n=52) |
+| 2 digits | 95.2 / 93.7 (n=21) | 67.8 / 68.9 (n=30) |
+| NNa | n/a | 77.6 / 80.6 (n=55) |
+| Na | n/a | 77.4 / 74.2 (n=31) |
+| 2 letters (Roman) | 79.7 / 82.6 (n=23) | 93.3 / 100 (n=5) |
+
+Held-out synthetic marked crops (600, all formats): replay 30% 76.3, ss3k 74.8, rm2 94.2; old marked-NNa set: 87.7 / 86.1 / 95.2 (rm2). The real crops, which have no synthetic marks, do not help on these, as expected.
+
+Findings:
+- No gain. Real test falls 1.1 points (94.5 -> 93.4), just past the 1-point noise band and in the wrong direction; words fall 0.9, coverage@99 falls 6.7 (inside its +-9.5 noise); your 226 crops are flat (82.9 vs 83.3). By the decision rule, the real SSL-HWD crops are not better than replay 30%.
+- The formats the data was meant to strengthen did not improve: 1-digit crops on your 226 are 92.0 (replay 30%: 97.8), and the real test 1-digit is 96.2 (97.5). Small per-format differences (n=5 to 52) are within noise.
+- Likely reasons (untested): domain gap (coloured photos of digits written in running text vs your grey exam-margin crops), label noise from automatic annotation, and a different digit style from the question-number writing. Adding 3,056 crops of that kind appears to pull the model slightly away from the target.
+- Decision: do not adopt. This closes the "more data" direction that does not come from the target documents: replay words, synthetic marks, and real out-of-domain digits have each left the real test at 93-95%.
+
 ## Run ledger
 
 Every run: config, seed, steps, wall time, checkpoint, git commit (from each run's `done.json`).
@@ -466,6 +497,9 @@ m2_s42\checkpointsinal.ckpt` | c5dd623+uncommitted |
 | rm2_s43 (replay30 + 4k marked, all formats) | 43 | 8445 | 23.0 | 93.9% | 89.0% | 57.5% | `outputs\exp_oct
 m2_s43\checkpointsinal.ckpt` | c5dd623+uncommitted |
 | rm2_s44 (replay30 + 4k marked, all formats) | 44 | 8445 | 23.0 | 95.3% | 88.3% | 59.9% | `outputs\exp_oct
+| ss3k_s42 (replay30 + 3,056 real SSL-HWD crops) | 42 | 7995 | 21-22 | 92.9% | 88.3% | 39.6% | `outputs\exp_oct\ss3k_s42\checkpoints\final.ckpt` | 6938c31+uncommitted |
+| ss3k_s43 (replay30 + 3,056 real SSL-HWD crops) | 43 | 7995 | 21-22 | 93.7% | 88.3% | 48.3% | `outputs\exp_oct\ss3k_s43\checkpoints\final.ckpt` | 6938c31+uncommitted |
+| ss3k_s44 (replay30 + 3,056 real SSL-HWD crops) | 44 | 7995 | 21-22 | 93.7% | 89.0% | 44.6% | `outputs\exp_oct\ss3k_s44\checkpoints\final.ckpt` | 6938c31+uncommitted |
 m2_s44\checkpointsinal.ckpt` | c5dd623+uncommitted |
 
 All runs: 15 epochs, batch 32, lr 1.5e-3, dropout 0.2, RandAugment 9, stretch 32x128 (config.yaml `train:`), data `outputs/exp_oct/data/master_lmdb` (unpacked from `data/master_dataset.mdb`, 13,996 train rows). Hash `+uncommitted` means the working tree had changes.
