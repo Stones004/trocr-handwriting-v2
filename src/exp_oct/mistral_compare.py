@@ -39,6 +39,12 @@ def norm(s):
     return re.sub(r"[^0-9A-Za-z]", "", str(s))
 
 
+def drop_prefix(raw):
+    """Mistral often reads the drawn 'Q.' prefix as a letter ('a.2', 'c i'): drop one leading letter that is followed by a separator."""
+    m = re.match(r"^\s*[A-Za-z][ .:\-]+\s*(.+)$", str(raw))
+    return norm(m.group(1)) if m else norm(raw)
+
+
 def ask(model, key, path, retries=6):
     b64 = base64.b64encode(Path(path).read_bytes()).decode()
     body = {"model": model, "temperature": 0, "max_tokens": 20,
@@ -69,9 +75,9 @@ def parseq_preds(run, paths):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--run", default="replay_p30_s44")
-    ap.add_argument("--model", default="mistral-small-latest")
+    ap.add_argument("--model", default="pixtral-12b-latest", help="mistral-small-latest has a 0 requests/minute limit on the free key")
     ap.add_argument("--limit", type=int, default=0, help="only the first N crops (a quick test)")
-    ap.add_argument("--wait", type=float, default=1.2, help="seconds between requests")
+    ap.add_argument("--wait", type=float, default=2.2, help="seconds between requests")
     a = ap.parse_args()
     load_dotenv(ROOT / ".env")
     key = os.environ.get("MISTRAL_API_KEY", "").strip()
@@ -99,6 +105,7 @@ def main():
     d["parseq_ok"] = d.parseq == d.truth
     d["mistral_ok"] = d.mistral == d.truth
     d["mistral_ok_lenient"] = d.mistral.str.lower() == d.truth.str.lower()
+    d["mistral_ok_prefix"] = d.mistral_raw.map(drop_prefix).str.lower() == d.truth.str.lower()
     d["agree"] = d.parseq == d.mistral
 
     def cat(r):
@@ -110,7 +117,7 @@ def main():
     d.to_csv(OUT / "mistral_vs_parseq.csv", index=False)
     n = len(d)
     print(f"\nPARSeq ({a.run}): {d.parseq_ok.sum()}/{n} = {d.parseq_ok.mean() * 100:.1f}%")
-    print(f"Mistral ({a.model}): {d.mistral_ok.sum()}/{n} = {d.mistral_ok.mean() * 100:.1f}% strict, {d.mistral_ok_lenient.mean() * 100:.1f}% ignoring case")
+    print(f"Mistral ({a.model}): {d.mistral_ok.sum()}/{n} = {d.mistral_ok.mean() * 100:.1f}% strict, {d.mistral_ok_lenient.mean() * 100:.1f}% ignoring case, {d.mistral_ok_prefix.mean() * 100:.1f}% also ignoring a leading letter read from the Q prefix")
     print(f"They give the same answer on {d.agree.sum()}/{n} crops; when they agree the answer is right {d[d.agree].parseq_ok.mean() * 100:.1f}% of the time")
     print("\n" + d.outcome.value_counts().to_string())
     print("\nBy subset (PARSeq / Mistral accuracy %):")

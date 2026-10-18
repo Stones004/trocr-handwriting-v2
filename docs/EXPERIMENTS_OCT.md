@@ -404,6 +404,8 @@ Conclusion: stroke thinness alone does not explain the screenshot weakness, so S
 
 ## LoGo-HTR setup (inference only, user request; nothing trained)
 
+> Removed 2026-10-19: the code, patch, weights and venv are deleted (see docs/CLEANUP_2026-10-19.md, section 5). Scores below stay; scripts are in git history (62690a9, 6938c31).
+
 LoGo-HTR (WACV 2026, self-supervised HTR, CoMER-style DenseNet encoder + bidirectional transformer decoder) set up for zero-shot inference. Repo https://github.com/shreemitra/LoGoHTR (MIT licence, commit 9eaea5f) in `third_party/LoGoHTR` (patched by `patches/logohtr.patch`); weights `Downstream_Full_Model_Best.ckpt` from https://huggingface.co/Shree10/LoGo-HTR (52,019,943 bytes, sha256 `25db3a51...c432`) in `third_party/LoGoHTR_weights/`; own venv `venv_logohtr` (torch 2.11+cu128, Lightning 2.6.6, current versions worked, no old pins needed). Script: `src/exp_oct/logo_htr_infer.py`.
 
 Verified: 6.39M parameters (about 6.4M as expected), `load_state_dict` matched all keys, output layer 97 rows -> dictionary of 94 lines. Two repo dictionaries have 94 lines (`SSL_HWD_Dict.txt`, `dictionary.txt`); tested both on 60 labelled word crops (`data/open_read/word_eval.csv`, synthetic): SSL_HWD_Dict.txt 12/60 exact with sensible text (Given, First read correctly), dictionary.txt 0/60 (garbage), so SSL_HWD_Dict.txt is the correct one. The first dictionary line is a space; the script maps the stripped empty token back to a space.

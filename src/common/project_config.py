@@ -1,14 +1,9 @@
-"""Single loader for the project configuration (config.yaml + config.local.yaml + optional PROJECT_CONFIG file).
-
-Later files override earlier ones, key by key (nested sections are merged, not replaced):
-    config.yaml            committed portable defaults
-    config.local.yaml      machine-specific overrides, gitignored
-    $PROJECT_CONFIG        optional third file, e.g. to run a one-off variant
+"""Loader for the project configuration: the single file config.yaml.
 
 Usage from any script (pure stdlib + PyYAML, works in both venvs):
     sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
-    from project_config import ROOT, cfg, path, subprocess_env
-    processed = path("processed_dir")          # absolute Path built from cfg["paths"]["processed_dir"]
+    from project_config import ROOT, cfg, path, subprocess_env, train_command
+    outputs = path("outputs_dir")              # absolute Path built from cfg["paths"]["outputs_dir"]
 
 Relative paths in the config are resolved against the project root, so scripts behave the same from any directory.
 """
@@ -22,31 +17,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[2]
 
 
-def _merge(base, over):
-    for k, v in (over or {}).items():
-        if isinstance(v, dict) and isinstance(base.get(k), dict):
-            _merge(base[k], v)
-        else:
-            base[k] = v
-    return base
-
-
-def load_config(extra=None):
-    """Merged config dict. `extra` is an optional additional yaml file layered on top of everything else."""
-    files = [(ROOT / "config.yaml", True), (ROOT / "config.local.yaml", False)]  # (file, required)
-    if os.environ.get("PROJECT_CONFIG"):
-        files.append((Path(os.environ["PROJECT_CONFIG"]), True))
-    if extra:
-        files.append((Path(extra), True))
-    out = {}
-    for f, required in files:
-        if not f.exists():
-            if required:
-                raise FileNotFoundError(f"Config file not found: {f}")
-            continue
-        with open(f, encoding="utf-8") as fh:
-            _merge(out, yaml.safe_load(fh) or {})
-    return out
+def load_config():
+    with open(ROOT / "config.yaml", encoding="utf-8") as fh:
+        return yaml.safe_load(fh) or {}
 
 
 cfg = load_config()
@@ -86,17 +59,26 @@ def label_regex(name):
     return re.compile(cfg["labels"][name])
 
 
-def train_command(experiment, overrides=()):
-    """argv for one PARSeq training run: third_party/parseq/train.py with the given Hydra experiment yaml plus overrides.
+def train_command(overrides=()):
+    """argv for one PARSeq training run: third_party/parseq/train.py with the recipe in config.yaml's `train:` section plus overrides.
 
-    Project defaults are filled in from config.yaml unless the caller overrides them: data.root_dir (paths.lmdb_dir),
-    data.train_dir (lmdb.dataset_name) and mlflow_db (paths.mlflow_db). Run it with cwd=ROOT and env=subprocess_env().
+    Anything in `overrides` (Hydra syntax, e.g. "seed=7", "data.root_dir=data/other_lmdb") wins over the config. Run with cwd=ROOT and
+    env=subprocess_env(). Hydra needs `+key` for keys PARSeq's own defaults do not define; the patch in patches/parseq_train.patch reads them.
     """
-    given = {o.split("=", 1)[0].lstrip("+") for o in overrides}
+    t = cfg["train"]
+    interval = t.get("system_metrics_interval")
     defaults = {
-        "data.root_dir": path("lmdb_dir").as_posix(),
-        "data.train_dir": cfg["lmdb"]["dataset_name"],
-        "mlflow_db": path("mlflow_db").as_posix(),
+        "model": "parseq", "charset": t["charset"], "pretrained": t["pretrained"],
+        "+seed": t["seed"], "+swa": str(t["swa"]).lower(), "+mlflow_experiment": t["mlflow_experiment"],
+        "+mlflow_db": path("mlflow_db").as_posix(), "+system_metrics_interval": "null" if interval is None else interval,
+        "data.root_dir": path("lmdb_dir").as_posix(), "data.train_dir": cfg["lmdb"]["dataset_name"], "data.num_workers": t["num_workers"],
+        "+data.augment_magnitude": t["augment_magnitude"], "+data.augment_num_layers": t["augment_num_layers"],
+        "model.batch_size": t["batch_size"], "model.lr": t["lr"], "model.dropout": t["dropout"], "model.weight_decay": t["weight_decay"],
+        "model.warmup_pct": t["warmup_pct"], "model.perm_num": t["perm_num"], "model.max_label_length": t["max_label_length"],
+        "model.img_size": "[" + ",".join(str(v) for v in t["img_size"]) + "]",
+        "trainer.max_epochs": t["max_epochs"], "trainer.devices": 1, "trainer.accelerator": "gpu",
+        "trainer.gradient_clip_val": t["gradient_clip_val"], "trainer.val_check_interval": 1.0,
     }
-    return [sys.executable, str(ROOT / "third_party" / "parseq" / "train.py"), f"--config-dir={ROOT / 'configs' / 'parseq'}",
-            f"+experiment={experiment}", *[f"{k}={v}" for k, v in defaults.items() if k not in given], *overrides]
+    given = {o.split("=", 1)[0].lstrip("+") for o in overrides}
+    return [sys.executable, str(ROOT / "third_party" / "parseq" / "train.py"),
+            *[f"{k}={v}" for k, v in defaults.items() if k.lstrip("+") not in given], *overrides]

@@ -17,12 +17,10 @@ Confidence is the per-character softmax probability from PARSeq's own decode
 step (min/mean across the predicted sequence, EOS included) -- the PARSeq
 analog of a per-token confidence score.
 
-Defaults come from config.yaml: the CSV is <paths.processed_dir>/test.csv, the flag threshold is
-inference.flag_threshold, and MLflow logs go to paths.mlflow_db.
+Defaults come from config.yaml: the flag threshold is inference.flag_threshold, and MLflow logs go to paths.mlflow_db.
 
 Usage:
-    python src/parseq/eval_parseq.py
-    python src/parseq/eval_parseq.py --csv data/processed/val.csv --output reports/parseq_results.csv
+    python src/parseq/eval_parseq.py --csv some_labelled.csv --checkpoint models/parseq_master_v3/parseq_master_v3.ckpt --output reports/results.csv
 """
 import argparse
 import sys
@@ -39,9 +37,10 @@ from project_config import cfg, path  # noqa: E402
 from validation_metrics import lev  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--csv", default=str(path("processed_dir") / "test.csv"))
+ap.add_argument("--csv", required=True, help="labelled CSV with columns filename,image_path,text")
 ap.add_argument("--checkpoint", default=None, help="path to a fine-tuned .ckpt from third_party/parseq/train.py; omit for the pretrained zero-shot model")
 ap.add_argument("--flag-threshold", type=float, default=cfg["inference"]["flag_threshold"], help="flag for review if min char confidence falls below this")
+ap.add_argument("--resize-mode", default="stretch", choices=["stretch", "pad"], help="must match the data.resize_mode the checkpoint was trained with")
 ap.add_argument("--output", default=None, help="optional per-sample results CSV")
 ap.add_argument("--mlflow-run", default=None, help="log test metrics into this MLflow run (run name, e.g. 2026-09-21_11-07-04, in --mlflow-experiment)")
 ap.add_argument("--mlflow-experiment", default="parseq")
@@ -49,7 +48,7 @@ args = ap.parse_args()
 
 device = get_device()
 model = load_model(args.checkpoint, device)
-img_transform = make_transform(model)
+img_transform = make_transform(model, args.resize_mode)
 
 df = pd.read_csv(args.csv)
 exact = edits = chars = flagged = 0

@@ -12,8 +12,8 @@ driver (RTX 5060 Ti). Adjust the CUDA wheel index if your GPU/driver differs.
 
 ## Prerequisites
 
-- `data/processed/{train,val,test}.csv` already exist (via this project's own
-  `src/common/prepare_dataset.py`), with columns `filename, image_path, text`.
+- The dataset is `data/master_dataset.mdb`; `python src/master/dataset_io.py unpack` writes the PARSeq training layout
+  (`data/master_lmdb`). Labelled CSVs for evaluation have columns `filename, image_path, text` (e.g. `data/docsplit/seed42/test.csv`).
 - A working main project venv is not required for any of the steps below —
   everything here is self-contained in a new, separate venv.
 
@@ -173,23 +173,21 @@ pretrained weights. As long as your label alphabet is a subset of the default
 default costs nothing.
 
 ```bash
-python -c "import pandas as pd; d=pd.concat(pd.read_csv(f'data/processed/{s}.csv') for s in ['train','val','test']); print(''.join(sorted(set(''.join(d['text'].astype(str))))))"
+python -c "import pandas as pd; d=pd.concat(pd.read_csv(f'data/docsplit/seed42/{s}.csv') for s in ['train','val','test']); print(''.join(sorted(set(''.join(d['text'].astype(str))))))"
 ```
 
 ## 4. Fine-tune
 
-The settings are versioned in `configs/parseq/experiment/parseq_handwriting.yaml`. Launch with:
+The settings live in `config.yaml` under `train:` (the recipe of the kept model, `parseq_master_v3`). Launch with:
 
 ```bash
-python src/parseq/train_parseq.py
-# or directly:
-venv_parseq/Scripts/python third_party/parseq/train.py --config-dir=configs/parseq +experiment=parseq_handwriting
+python src/parseq/train_parseq.py hydra.run.dir=outputs/parseq_master/run_v3
 ```
 
 This needs the edits in `patches/parseq_train.patch` (apply once inside `third_party/parseq` with
 `git apply ../../patches/parseq_train.patch`; it includes the seed patch from step 2, so skip that manual edit).
-The table below documents the original reasoning; the current values (higher dropout/LR/augmentation, early
-stopping) live in the config file.
+The table below documents the original reasoning; the current values (higher dropout/LR/augmentation, fixed 15 epochs)
+live in `config.yaml`.
 
 | Parameter | Value | Why |
 |---|---|---|
@@ -238,15 +236,14 @@ below that value for manual review — same semantics and default as
 `evaluate.py`'s `--flag-threshold`.
 
 Result from our run (best checkpoint, epoch 20/50, `val_accuracy=95.32`),
-evaluated on the same held-out `data/processed/test.csv`:
+evaluated on the (older, random-split) test set of that time:
 
 | Model | Exact-match | CER |
 |---|---|---|
 | PARSeq, fine-tuned | **93.1%** | **5.9%** |
 
 (This single-run number predates the hyperparameter sweeps, document-level
-cross-validation, and the final production model — see `reports/model_validation.md`
-and the "Final production model" section of `README.md` for the current numbers.)
+cross-validation and the master dataset — see `docs/MODEL_REPORT.md` for the current numbers.)
 
 Verified this wasn't a fluke: reran the eval from the same checkpoint (got
 the identical 93.06%), checked for train/test image-path overlap (zero — no

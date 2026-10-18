@@ -4,3 +4,10 @@ pillow
 pyyaml
 numpy
 tqdm
+
+# src/noise_classifier/ (ResNet-18 fine-tune, main venv -- no Hydra/Lightning/LMDB needed, unlike PARSeq).
+# Install torch first with the CUDA build matching your driver, e.g.:
+#   pip install torch==2.11.0 torchvision==0.26.0 --index-url https://download.pytorch.org/whl/cu128
+torch
+torchvision
+scikit-learn

@@ -36,10 +36,12 @@ def load_model(checkpoint=None, device=None):
     return model.eval().to(device)
 
 
-def make_transform(model):
-    """Resize to the model's own input size (read from the checkpoint), then normalize to [-1, 1]. Must match training."""
+def make_transform(model, resize_mode="stretch"):
+    """Resize to the model's own input size (read from the checkpoint), then normalize to [-1, 1]. Must match training:
+    `resize_mode` is the `data.resize_mode` the model was trained with ("stretch" = PARSeq default, "pad" = aspect-preserving + padding)."""
+    from strhub.data.module import make_resize
     return T.Compose([
-        T.Resize(model.hparams.img_size, T.InterpolationMode.BICUBIC),
+        make_resize(tuple(model.hparams.img_size), resize_mode),
         T.ToTensor(),
         T.Normalize(0.5, 0.5),
     ])

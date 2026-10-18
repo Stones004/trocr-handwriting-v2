@@ -40,7 +40,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "common"))
 from project_config import cfg, path, resolve  # noqa: E402
 
 ap = argparse.ArgumentParser()
-ap.add_argument("--processed-dir", default=str(path("processed_dir")))
+ap.add_argument("--processed-dir", required=True, help="folder holding train.csv / val.csv / test.csv (filename,image_path,text)")
 ap.add_argument("--output-dir", default=str(path("lmdb_dir")))
 ap.add_argument("--dataset-name", default=cfg["lmdb"]["dataset_name"])
 ap.add_argument("--map-size-mb", type=int, default=cfg["lmdb"]["map_size_mb"])

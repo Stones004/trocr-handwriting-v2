@@ -1,73 +1,75 @@
-# Project configuration: the ONE place to change data locations, split settings, folders, label rules and thresholds.
-#
-# This file holds portable defaults and is committed. Put machine-specific values (your image folder, your annotation
-# workbook, a D: drive for temp files, ...) in `config.local.yaml` next to this file: it is gitignored and is merged
-# on top of this one (see config.example.local.yaml). Set PROJECT_CONFIG=<file> to layer a third file on top.
+# Project configuration: the ONE config file. Data locations, label rules, inference defaults and the training recipe all live here.
 # Relative paths are resolved against the project root, so scripts work from any working directory.
 # Command-line flags on individual scripts still override anything here for a single run.
 
-# ---- Data source (used by src/common/prepare_dataset.py) ---------------------------------------------------------
-image_dir: "data/raw/images"                 # folder with the crop images
-annotation_file: "data/raw/annotations.xlsx" # Excel workbook with one row per image
-label_column: "Normalize"                    # column holding the ground-truth text
-filename_column: "filename"                  # column holding the image file name
-
-# Random per-crop split (prepare_dataset.py). Ratios must sum to 1.
-split:
+# ---- Raw data (src/master/build_master.py, src/noise_classifier/prepare_dataset.py) ----------------------------------
+image_dir: "D:/all_roi_images"               # folder with every labelled crop image
+annotation_file: "D:/annotations.xlsx"           # workbook: one row per image; `text` = verbatim, `Normalize` = training label
+label_column: "Normalize"
+filename_column: "filename"
+split:                                       # random per-crop split used by the noise-classifier dataset builder
   train: 0.80
   val: 0.10
   test: 0.10
   seed: 25
+docsplit:                                    # document-level split (no document in two sets)
+  seed: 42
+  tries: 300
 
-# ---- Folders (everything the pipeline reads or writes) -----------------------------------------------------------
+# ---- Folders ---------------------------------------------------------------------------------------------------------
 paths:
-  processed_dir: data/processed          # train/val/test.csv from prepare_dataset.py (+ ambiguous/freetext/missing)
-  lmdb_dir: data/parseq_lmdb             # LMDB built from processed_dir (matches data.root_dir in the experiment yamls)
-  all_data_dir: data/all_data            # every labelled crop in `train`, for the final model (prepare_alldata.py)
-  all_lmdb_dir: data/all_lmdb            # LMDB built from all_data_dir
-  docsplit_dir: data/docsplit            # document-level splits, one subfolder per seed: seed<N>/
-  docsplit_lmdb_dir: data/docsplit_lmdb  # their LMDBs, seed<N>/
-  outputs_dir: outputs                   # training runs and sweeps
-  reports_dir: reports                   # result tables, logs, validation CSVs
-  models_dir: models                     # exported deployment checkpoints
-  mlflow_db: mlflow.db                   # MLflow tracking store (sqlite)
+  master_dataset: data/master_dataset.mdb    # THE dataset: every real + synthetic crop in one file (src/master/dataset_io.py)
+  lmdb_dir: data/master_lmdb                 # PARSeq training layout, produced from master_dataset by `dataset_io.py unpack`
+  noise_dataset_dir: data/noise_classifier   # noise/clean crop CSVs
+  outputs_dir: outputs                       # training runs
+  reports_dir: reports                       # result tables
+  models_dir: models                         # exported deployment checkpoints
+  mlflow_db: mlflow.db                       # MLflow tracking store (created on the first run)
 
-# ---- Environment -------------------------------------------------------------------------------------------------
-# Only needed if the default temp/cache location is on a drive that is short of space. null = leave the OS default.
+# ---- Environment (drive short of space? null = OS default) -----------------------------------------------------------
 env:
-  tmp_dir: null                          # e.g. "D:/tmp"  -> TMP and TEMP for training subprocesses
-  torch_home: null                       # e.g. "D:/cache/torch" -> where torch.hub caches pretrained weights
+  tmp_dir: "D:/tmp"
+  torch_home: "D:/cache/torch"
 
-# ---- Label rules (shared by data cleaning, inference and the document split) -------------------------------------
+# ---- Label rules (inference flag + data cleaning) --------------------------------------------------------------------
 labels:
-  # A "clean" label: a digit run with an optional subpart letter (6b), a Roman numeral, or a bare subpart letter,
-  # optionally wrapped in parens and/or ending in '.' / ')' / '.)'. Anything else is routed to freetext.csv and is
-  # also flagged at inference time as "does not look like a valid label".
+  # "clean" label: a digit run with an optional subpart letter (6b), a Roman numeral, or a bare subpart letter, optionally wrapped in
+  # parens and/or ending in '.' / ')' / '.)'. Anything else is flagged at inference time as "does not look like a valid label".
   clean_pattern: '^\(?(?:[0-9]+[a-jA-J]?|[IVXivx]+|[a-jA-J])(?:\.\)|[.)])?\)?\Z'
-  ambiguous_markers: ["ambigous", "ambiguous"]   # reviewer markers, not ground truth; excluded from training
-  excel_artifact_pattern: '_x000[0-9A-Fa-f]_'    # Excel line-break escapes stripped from labels
-  doc_id_pattern: '^(Doc\d+)'                    # first group of the file name = document id (document-level split)
+  ambiguous_markers: ["ambigous", "ambiguous"]
+  excel_artifact_pattern: '_x000[0-9A-Fa-f]_'
+  doc_id_pattern: '^(Doc\d+)'                # first group of the file name = document id
 
-# ---- LMDB packing (prepare_parseq_dataset.py) --------------------------------------------------------------------
+# ---- LMDB packing (src/parseq/prepare_parseq_dataset.py) -------------------------------------------------------------
 lmdb:
-  dataset_name: handwriting              # folder name under <lmdb>/<split>/ ; must equal data.train_dir in the yamls
-  map_size_mb: 512                       # LMDB map size; keep modest on Windows (see prepare_parseq_dataset.py)
+  dataset_name: handwriting                  # folder under <lmdb>/<split>/ ; equals data.train_dir for training
+  map_size_mb: 512
 
-# ---- Document-level split and cross-validation -------------------------------------------------------------------
-docsplit:
-  seed: 42                               # default seed for prepare_docsplit.py
-  tries: 300                             # random document assignments tried; the best-balanced one is kept
-  cv_seeds: [42, 43, 44, 45, 46]         # folds run by docsplit_cv.py
-
-# ---- Inference and review -----------------------------------------------------------------------------------------
+# ---- Inference and review --------------------------------------------------------------------------------------------
 inference:
-  checkpoint: models/parseq_final/parseq_final.ckpt   # production model used by predict.py
-  flag_threshold: 0.5                    # a prediction whose minimum per-character probability is below this is
-                                         # "flagged for review" (eval_parseq.py, summarize_validation.py, predict.py)
+  checkpoint: models/parseq_master_v3/parseq_master_v3.ckpt   # the model kept as the best (see docs/MODEL_REPORT.md)
+  flag_threshold: 0.5                        # a prediction whose minimum per-character probability is below this is "flagged for review"
 
-# ---- Validation report (validate_models.py, summarize_validation.py) ----------------------------------------------
-validation:
-  batch_size: 64
-  rare_max: 5                            # a label is "rare" if it has <= this many training examples
-  bootstrap_n: 2000                      # bootstrap resamples for the test-accuracy confidence interval
-  ece_bins: 10                           # bins for the expected-calibration-error metric
+# ---- Training recipe: PARSeq fine-tuning, exactly the parseq_master_v3 run (docs/MODEL_REPORT.md) -------------------
+# src/common/project_config.train_command() turns this section into Hydra overrides for third_party/parseq/train.py.
+# Requires patches/parseq_train.patch (seed, augmentation strength, MLflow, swa switch, final.ckpt).
+train:
+  pretrained: parseq                         # start from baudm/parseq's scene-text weights
+  seed: 42
+  max_epochs: 15                             # fixed length, no early stopping; the LAST epoch is the model
+  batch_size: 32
+  lr: 1.5e-3                                 # PARSeq default 7e-4
+  dropout: 0.2                               # PARSeq default 0.1
+  weight_decay: 0.0
+  warmup_pct: 0.075
+  perm_num: 6                                # permutations per sample (permutation language modelling)
+  img_size: [32, 128]                        # [height, width]; every crop is stretched to this
+  max_label_length: 25
+  charset: 94_full                           # the 94 printable ASCII characters PARSeq was pretrained with
+  augment_magnitude: 9                       # RandAugment strength (PARSeq default 5)
+  augment_num_layers: 3
+  gradient_clip_val: 20
+  swa: false                                 # no stochastic weight averaging
+  num_workers: 0
+  system_metrics_interval: 5                 # seconds between CPU/RAM/GPU samples logged to MLflow; null disables
+  mlflow_experiment: parseq

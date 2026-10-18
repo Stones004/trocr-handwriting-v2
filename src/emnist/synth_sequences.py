@@ -45,10 +45,23 @@ DESCENT = {"g": 0.22, "j": 0.20}  # fraction of digit height a glyph hangs below
 
 # Recipes: v1 = first experiment round; v2 = more varied trailing marks (v1 models read real ')' and '.' as extra
 # characters) and more weight on the `NNa` shape, which is the future label format (set with --recipe).
+# v3 = v2 without the `ii`/`iii` template: the scanner read real `11i` crops as `iii` (confidence 0.99-1.00), i.e. the
+# repeated-'i' sequences taught "bars + dotted i = iii". Its 8% goes to `DD` and `DDL`; everything else is unchanged.
 TEMPLATES_BY_RECIPE = {
     "v1": {"D": 0.30, "DD": 0.22, "L": 0.10, "DL": 0.10, "DDL": 0.20, "ii": 0.08},
     "v2": {"D": 0.26, "DD": 0.18, "L": 0.08, "DL": 0.10, "DDL": 0.30, "ii": 0.08},
+    "v3": {"D": 0.26, "DD": 0.22, "L": 0.08, "DL": 0.10, "DDL": 0.34},
+    "v4": {"D": 0.20, "DD": 0.16, "L": 0.06, "DL": 0.08, "DDL": 0.25, "G9": 0.25},
+    "v5": {"D": 0.16, "DD": 0.14, "L": 0.05, "DL": 0.08, "DDL": 0.25, "G9": 0.16, "ONES": 0.16},
 }
+RECIPES_V2_STYLE = ("v2", "v3", "v4", "v5")  # recipes using the v2 clutter marks and crop widths
+# v4 = v3 + a `G9` template for the g-vs-9 confusion. Our real crops contain no `g`, and a single-story `g` looks like a `9`,
+# so the two are contrasted in identical contexts: `9` in digit slots, `g` only as the trailing letter of `NNa`-style labels.
+# v5 = v4 + `ONES` (hard runs of the digit 1: the scanner dropped or invented a `1` in `11i`, `11.a`, `13.f`) + the dot-separated
+# `NN.a` layout seen in some scanner crops (a dot between the number and the letter, NOT part of the label; the letter is written
+# larger and further away) + lighter paper / paler ink. Set --glyphs to a bank built with make_g9_glyphs.py --font-share-other.
+ONES_PATTERNS = {"11": 0.15, "111": 0.08, "1L": 0.15, "11L": 0.30, "D1L": 0.12, "1DL": 0.12, "1": 0.08}
+G9_PATTERNS = {"9": 0.10, "D9": 0.09, "9D": 0.09, "9g": 0.12, "D9g": 0.22, "9Dg": 0.14, "99g": 0.06, "DDg": 0.18}
 RECIPE = "v1"
 ONLY_TEMPLATE = None  # e.g. "DDL" to build a pure NNa set (see --only-template)
 
@@ -58,6 +71,16 @@ def sample_label(rng):
     kind = ONLY_TEMPLATE or rng.choice(kinds, p=np.array(w) / sum(w))
     dig = lambda lo=0: str(rng.integers(lo, 10))
     let = lambda: LETTERS[rng.integers(0, len(LETTERS))]
+
+    def ones():
+        pat = rng.choice(list(ONES_PATTERNS), p=np.array(list(ONES_PATTERNS.values())))
+        return {"11": "11", "111": "111", "1L": "1" + let(), "11L": "11" + let(), "D1L": dig() + "1" + let(),
+                "1DL": "1" + dig() + let(), "1": "1"}[pat]
+
+    def g9():
+        pat = rng.choice(list(G9_PATTERNS), p=np.array(list(G9_PATTERNS.values())))
+        return {"9": "9", "D9": dig(1) + "9", "9D": "9" + dig(), "9g": "9g", "D9g": dig() + "9g", "9Dg": "9" + dig() + "g",
+                "99g": "99g", "DDg": dig() + dig() + "g"}[pat]
     return {
         "D": lambda: dig(),
         "DD": lambda: dig(1) + dig(),     # real two-digit numbers have no leading zero
@@ -65,6 +88,8 @@ def sample_label(rng):
         "DL": lambda: dig() + let(),
         "DDL": lambda: dig() + dig() + let(),  # the `NNa` format: leading zeros allowed (02a, 01j)
         "ii": lambda: "i" * int(rng.choice([2, 3], p=[0.6, 0.4])),
+        "G9": g9,
+        "ONES": ones,
     }[kind]()
 
 
@@ -109,20 +134,27 @@ def render_glyph(rng, bank, ch, hd):
     return np.clip(tight_crop(np.clip(g, 0, 1), 0.08), 0, 1)
 
 
-def compose_sequence(rng, bank, label, hd):
-    glyphs = [render_glyph(rng, bank, ch, hd) for ch in label]
+def compose_sequence(rng, bank, label, hd, sep_dot=False):
+    """sep_dot: `NN.a` layout -- a dot between the number and the trailing letter, which is written larger and set further away."""
+    last = len(label) - 1
+    glyphs = [render_glyph(rng, bank, ch, hd * (rng.uniform(1.0, 1.35) if sep_dot and k == last else 1.0)) for k, ch in enumerate(label)]
     gaps = [rng.uniform(-0.08, 0.25) * hd for _ in label]
+    if sep_dot:
+        gaps[last - 1] += rng.uniform(0.35, 0.8) * hd
     height = int(hd * 2.2)
     width = int(sum(g.shape[1] for g in glyphs) + sum(max(0, x) for x in gaps) + hd * 2)
     ink = np.zeros((height, width), np.float32)
     baseline = int(hd * 1.5)
     x = hd * 0.5
-    for ch, g, gap in zip(label, glyphs, gaps):
+    for k, (ch, g, gap) in enumerate(zip(label, glyphs, gaps)):
         bottom = int(baseline + DESCENT.get(ch, 0.0) * hd + rng.normal(0, 0.03) * hd)
         y0, x0 = bottom - g.shape[0], int(x)
         if y0 < 0 or x0 + g.shape[1] > width:
             continue
         ink[y0: bottom, x0: x0 + g.shape[1]] = np.maximum(ink[y0: bottom, x0: x0 + g.shape[1]], g)
+        if sep_dot and k == last - 1:
+            cv2.circle(ink, (int(x + g.shape[1] + gap * 0.55), int(baseline - rng.uniform(0.05, 0.5) * hd)),
+                       max(2, int(hd * rng.uniform(0.035, 0.07))), 1.0, -1, cv2.LINE_AA)
         x += g.shape[1] + gap
     rot = float(np.clip(rng.normal(0, 2), -5, 5))
     m = cv2.getRotationMatrix2D((width / 2, height / 2), rot, 1.0)
@@ -218,12 +250,13 @@ def draw_clutter_v2(rng, content, hd):
 
 def render_crop(rng, bank, label):
     hd = int(rng.integers(45, 115))
-    clutter = draw_clutter_v2 if RECIPE == "v2" else draw_clutter
-    ink, sw = clutter(rng, compose_sequence(rng, bank, label, hd), hd)
+    clutter = draw_clutter_v2 if RECIPE in RECIPES_V2_STYLE else draw_clutter
+    sep_dot = RECIPE == "v5" and len(label) >= 2 and label[-1] in LETTERS and rng.random() < 0.35
+    ink, sw = clutter(rng, compose_sequence(rng, bank, label, hd, sep_dot), hd)
     ink = tight_crop(ink, 0.05)
     ch, cw = ink.shape
     my, mx = rng.uniform(0.08, 0.45) * ch, rng.uniform(0.08, 0.45) * ch
-    if RECIPE == "v2":  # longer non-'i' sequences (the NNa shape) get wider crops
+    if RECIPE in RECIPES_V2_STYLE:  # longer non-'i' sequences (the NNa shape) get wider crops
         mu, sd = (0.86, 0.25) if len(label) == 1 else (1.5, 0.5) if len(label) >= 3 and label[0] != "i" else (1.1, 0.4)
         ar = float(np.clip(rng.normal(mu, sd), 0.5, 3.0))
     else:
@@ -245,9 +278,9 @@ def render_crop(rng, bank, label):
         alpha[y1:, max(0, xl): xl + lw] = 1.0
 
     # Photometric: paper, ink, noise, blur, compression.
-    bg = rng.uniform(215, 255)
+    bg = rng.uniform(185 if RECIPE == "v5" else 215, 255)
     ramp = rng.uniform(-10, 10) * (np.linspace(-1, 1, w)[None, :] * rng.uniform(-1, 1) + np.linspace(-1, 1, h)[:, None] * rng.uniform(-1, 1))
-    ink_lvl = rng.uniform(15, 110)
+    ink_lvl = rng.uniform(15, 130 if RECIPE == "v5" else 110)
     img = np.clip(bg + ramp, 0, 255) * (1 - alpha) + ink_lvl * alpha
     img = img + rng.normal(0, rng.uniform(0, 6), img.shape)
     if rng.random() < 0.5:
@@ -275,7 +308,7 @@ if __name__ == "__main__":
     ap.add_argument("--glyphs", default="data/emnist/glyphs.npz")
     ap.add_argument("--glyph-split", choices=["train", "test"], default="train",
                     help="which EMNIST split's glyphs to draw from; use `test` for validation so writers never overlap")
-    ap.add_argument("--recipe", choices=["v1", "v2"], default="v1")
+    ap.add_argument("--recipe", choices=["v1", "v2", "v3", "v4", "v5"], default="v1")
     ap.add_argument("--only-template", choices=list(TEMPLATES_BY_RECIPE["v1"]), default=None,
                     help="draw every label from one template, e.g. DDL for a pure `NNa` evaluation set")
     ap.add_argument("--labels-csv", default=None,

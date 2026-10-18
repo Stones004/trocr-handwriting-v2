@@ -1,0 +1,60 @@
+model:
+  _convert_: all
+  img_size:
+  - 32
+  - 128
+  max_label_length: 25
+  charset_train: 0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ!"#$%&'()*+,-./:;<=>?@[\]^_`{|}~
+  charset_test: 0123456789abcdefghijklmnopqrstuvwxyz
+  batch_size: 32
+  weight_decay: 0.0
+  warmup_pct: 0.075
+  name: parseq
+  _target_: strhub.models.parseq.system.PARSeq
+  patch_size:
+  - 4
+  - 8
+  embed_dim: 384
+  enc_num_heads: 6
+  enc_mlp_ratio: 4
+  enc_depth: 12
+  dec_num_heads: 12
+  dec_mlp_ratio: 4
+  dec_depth: 1
+  lr: 0.0015
+  perm_num: 6
+  perm_forward: true
+  perm_mirrored: true
+  dropout: 0.2
+  decode_ar: true
+  refine_iters: 1
+data:
+  _target_: strhub.data.module.SceneTextDataModule
+  root_dir: D:/trocr-handwriting-v2/trocr-handwriting-v2/data/master_lmdb
+  train_dir: handwriting
+  batch_size: ${model.batch_size}
+  img_size: ${model.img_size}
+  charset_train: ${model.charset_train}
+  charset_test: ${model.charset_test}
+  max_label_length: ${model.max_label_length}
+  remove_whitespace: true
+  normalize_unicode: true
+  augment: true
+  num_workers: 0
+  augment_magnitude: 9
+  augment_num_layers: 3
+trainer:
+  _target_: pytorch_lightning.Trainer
+  _convert_: all
+  val_check_interval: 1.0
+  max_epochs: 15
+  gradient_clip_val: 20
+  accelerator: gpu
+  devices: 1
+ckpt_path: null
+pretrained: parseq
+seed: 42
+swa: false
+mlflow_experiment: parseq
+mlflow_db: D:/trocr-handwriting-v2/trocr-handwriting-v2/mlflow.db
+system_metrics_interval: 5
